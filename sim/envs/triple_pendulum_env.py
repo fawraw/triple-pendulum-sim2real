@@ -38,15 +38,22 @@ class TriplePendulumEnv(gym.Env):
 
     def __init__(self, target_ep: int = 7, render_mode: str | None = None,
                  max_episode_steps: int = 1500,
-                 init_mode: str = "near_target", init_noise: float = 0.05):
+                 init_mode: str = "near_target", init_noise: float = 0.05,
+                 target_mode: str = "fixed"):
         """
         init_mode:
           - "near_target": start with link angles within `init_noise` of the target EP.
-            Use this for the stabilization milestone (M2, M3).
+            Use this for the stabilization milestones (M2, M3).
           - "bottom":      start near the natural rest configuration (DDD).
             Use this for swing-up and full transition control (M4+).
           - "random":      start with all link angles uniformly in [-pi, pi].
             Use this once the policy is robust enough.
+        target_mode:
+          - "fixed":  target_ep stays at the value passed to __init__. Use for
+            single-equilibrium milestones (M2).
+          - "random": target_ep is resampled uniformly in 0..7 on every reset.
+            Use for the conditional milestone (M3) and beyond, so the policy
+            learns to read the target one-hot in its observation.
         init_noise: scale of the uniform noise applied to qpos/qvel at reset (rad / rad/s).
         """
         super().__init__()
@@ -56,6 +63,7 @@ class TriplePendulumEnv(gym.Env):
         self.max_episode_steps = max_episode_steps
         self.init_mode = init_mode
         self.init_noise = float(init_noise)
+        self.target_mode = str(target_mode)
         self._step_count = 0
         self.render_mode = render_mode
         self._renderer = None
@@ -142,6 +150,8 @@ class TriplePendulumEnv(gym.Env):
         mujoco.mj_resetData(self.model, self.data)
         if options and "target_ep" in options:
             self.target_ep = int(options["target_ep"])
+        elif self.target_mode == "random":
+            self.target_ep = int(self.np_random.integers(0, 8))
         if options and "init_mode" in options:
             self.init_mode = str(options["init_mode"])
 

@@ -1,0 +1,39 @@
+# Milestone 3: train one TQC policy that stabilizes all 8 equilibria.
+# At every reset the env samples a new target EP uniformly in 0..7 and starts
+# the system within `init_noise` rad of that EP. The policy reads the target
+# from its observation (one-hot) and outputs a stabilizing control.
+
+env:
+  target_ep: 7              # ignored when target_mode == "random"
+  target_mode: random       # cycle target across all 8 EPs
+  max_episode_steps: 1000
+  init_mode: near_target
+  init_noise: 0.05
+
+algo: TQC
+total_timesteps: 400_000
+
+tqc:
+  policy: MlpPolicy
+  learning_rate: 3.0e-4
+  buffer_size: 400_000
+  batch_size: 256
+  tau: 0.005
+  gamma: 0.99
+  train_freq: 1
+  gradient_steps: 1
+  top_quantiles_to_drop_per_net: 2
+  policy_kwargs:
+    net_arch: [256, 256]
+    n_critics: 3
+    n_quantiles: 25
+
+callbacks:
+  rollout_log_freq: 4_000
+  checkpoint_freq:  100_000
+
+eval:
+  freq: 25_000
+  n_episodes: 16     # 2 per EP on average
+  deterministic: true
+  final_n_episodes: 80   # 10 per EP on average
