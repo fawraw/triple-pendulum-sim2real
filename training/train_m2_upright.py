@@ -3,7 +3,8 @@
 Run from project root:
 
     source .venv/bin/activate
-    python -m training.train_m2_upright --config training/configs/m2_upright_tqc.yaml
+    MUJOCO_GL=osmesa python -m training.train_m2_upright \\
+        --config training/configs/m2_upright_tqc.yaml
 
 By default this logs to a local mlruns/ directory. To log to a remote MLflow
 tracking server, export MLFLOW_TRACKING_URI before launching.
@@ -21,11 +22,14 @@ import mlflow
 import numpy as np
 import yaml
 from sb3_contrib import TQC
-from stable_baselines3.common.callbacks import EvalCallback
+from stable_baselines3.common.callbacks import (
+    BaseCallback,
+    CheckpointCallback,
+    EvalCallback,
+)
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv
 
-# Make sure `sim/` is importable when running as a module.
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
@@ -33,13 +37,43 @@ from sim.envs.triple_pendulum_env import TriplePendulumEnv  # noqa: E402
 from training.mlflow_setup import init_mlflow  # noqa: E402
 
 
-def make_env(target_ep: int, max_steps: int, seed: int):
+def make_env(env_cfg: dict):
     def _thunk():
-        env = TriplePendulumEnv(target_ep=target_ep, max_episode_steps=max_steps)
-        env = Monitor(env)
-        env.reset(seed=seed)
-        return env
+        env = TriplePendulumEnv(
+            target_ep=int(env_cfg["target_ep"]),
+            init_mode=str(env_cfg.get("init_mode", "near_target")),
+            init_noise=float(env_cfg.get("init_noise", 0.05)),
+            max_episode_steps=int(env_cfg["max_episode_steps"]),
+        )
+        return Monitor(env)
     return _thunk
+
+
+class MLflowRolloutLogger(BaseCallback):
+    """Log rolling-window episode return statistics to MLflow."""
+
+    def __init__(self, log_freq: int = 4000):
+        super().__init__()
+        self.log_freq = log_freq
+        self._last = 0
+        self._t0 = time.time()
+
+    def _on_step(self) -> bool:
+        if self.num_timesteps - self._last < self.log_freq:
+            return True
+        self._last = self.num_timesteps
+        sps = self.num_timesteps / max(1e-3, time.time() - self._t0)
+        mlflow.log_metric("timesteps", self.num_timesteps, step=self.num_timesteps)
+        mlflow.log_metric("steps_per_s", float(sps), step=self.num_timesteps)
+        rewards = [ep["r"] for ep in self.model.ep_info_buffer][-50:]
+        if rewards:
+            mlflow.log_metric("rollout_ep_rew_mean", float(np.mean(rewards)),
+                              step=self.num_timesteps)
+            mlflow.log_metric("rollout_ep_rew_min", float(np.min(rewards)),
+                              step=self.num_timesteps)
+            mlflow.log_metric("rollout_ep_rew_max", float(np.max(rewards)),
+                              step=self.num_timesteps)
+        return True
 
 
 def main(cfg_path: str) -> None:
@@ -49,12 +83,11 @@ def main(cfg_path: str) -> None:
     init_mlflow()
     run_name = f"m2_upright_{time.strftime('%Y%m%d_%H%M%S')}"
 
-    target_ep = int(cfg["env"]["target_ep"])
-    max_steps = int(cfg["env"]["max_episode_steps"])
+    env_cfg = cfg["env"]
     total_timesteps = int(cfg["total_timesteps"])
 
-    train_env = DummyVecEnv([make_env(target_ep, max_steps, seed=0)])
-    eval_env = DummyVecEnv([make_env(target_ep, max_steps, seed=99)])
+    train_env = DummyVecEnv([make_env(env_cfg)])
+    eval_env = DummyVecEnv([make_env(env_cfg)])
 
     tqc_kwargs = dict(cfg["tqc"])
     policy = tqc_kwargs.pop("policy")
@@ -63,47 +96,68 @@ def main(cfg_path: str) -> None:
     model = TQC(
         policy,
         train_env,
-        verbose=1,
+        verbose=0,
         tensorboard_log=str(ROOT / "runs" / run_name),
         policy_kwargs=policy_kwargs,
         **tqc_kwargs,
     )
 
+    cb_cfg = cfg.get("callbacks", {})
+    eval_cfg = cfg.get("eval", {})
+
+    rollout_cb = MLflowRolloutLogger(log_freq=int(cb_cfg.get("rollout_log_freq", 4000)))
     eval_cb = EvalCallback(
         eval_env,
         best_model_save_path=str(ROOT / "checkpoints" / run_name),
         log_path=str(ROOT / "runs" / run_name / "eval"),
-        eval_freq=int(cfg["eval"]["freq"]),
-        n_eval_episodes=int(cfg["eval"]["n_episodes"]),
-        deterministic=bool(cfg["eval"]["deterministic"]),
+        eval_freq=int(eval_cfg.get("freq", 20000)),
+        n_eval_episodes=int(eval_cfg.get("n_episodes", 5)),
+        deterministic=bool(eval_cfg.get("deterministic", True)),
+    )
+    ckpt_cb = CheckpointCallback(
+        save_freq=int(cb_cfg.get("checkpoint_freq", 50000)),
+        save_path=str(ROOT / "checkpoints" / run_name),
+        name_prefix="tqc",
     )
 
-    with mlflow.start_run(run_name=run_name):
-        # Log config + git commit
-        mlflow.log_params({f"cfg.{k}": v for k, v in tqc_kwargs.items()})
-        mlflow.log_param("env.target_ep", target_ep)
-        mlflow.log_param("env.max_episode_steps", max_steps)
+    t0 = time.time()
+    with mlflow.start_run(run_name=run_name) as run:
+        for k, v in tqc_kwargs.items():
+            mlflow.log_param(f"tqc.{k}", v)
+        for k, v in env_cfg.items():
+            mlflow.log_param(f"env.{k}", v)
         mlflow.log_param("total_timesteps", total_timesteps)
-        mlflow.log_param("git_commit", os.popen("git rev-parse HEAD").read().strip() or "unknown")
+        mlflow.log_param("git_commit",
+                         os.popen("git rev-parse HEAD").read().strip() or "unknown")
 
-        model.learn(total_timesteps=total_timesteps, callback=eval_cb, progress_bar=True)
+        print(f"Run ID  : {run.info.run_id}")
+        print(f"Run URL : {mlflow.get_tracking_uri()}/#/experiments/"
+              f"{run.info.experiment_id}/runs/{run.info.run_id}")
+
+        model.learn(total_timesteps=total_timesteps,
+                    callback=[rollout_cb, eval_cb, ckpt_cb],
+                    progress_bar=False)
+
+        elapsed = time.time() - t0
+        mlflow.log_metric("train_wall_seconds", elapsed)
         save_path = ROOT / "checkpoints" / run_name / "final.zip"
-        model.save(save_path)
+        model.save(str(save_path))
         mlflow.log_artifact(str(save_path), artifact_path="model")
 
-        # Final eval
         rewards = []
-        for _ in range(20):
+        for _ in range(int(eval_cfg.get("final_n_episodes", 20))):
             obs = eval_env.reset()
             done = [False]
             ep_r = 0.0
             while not done[0]:
                 action, _ = model.predict(obs, deterministic=True)
-                obs, r, done, _info = eval_env.step(action)
+                obs, r, done, _ = eval_env.step(action)
                 ep_r += float(r[0])
             rewards.append(ep_r)
         mlflow.log_metric("final_eval_reward_mean", float(np.mean(rewards)))
         mlflow.log_metric("final_eval_reward_std", float(np.std(rewards)))
+        print(f"DONE in {elapsed:.0f}s. "
+              f"Final eval mean={np.mean(rewards):.2f} +/- {np.std(rewards):.2f}")
 
 
 if __name__ == "__main__":

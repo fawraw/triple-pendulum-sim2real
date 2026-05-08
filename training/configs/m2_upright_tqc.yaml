@@ -3,30 +3,35 @@
 # the policy only has to reject perturbations.
 
 env:
-  target_ep: 7         # UUU
-  max_episode_steps: 1500
-  init_noise: 0.05     # rad on each joint, m on cart
+  target_ep: 7              # UUU
+  max_episode_steps: 1000
+  init_mode: near_target    # near_target | bottom | random
+  init_noise: 0.05
 
 algo: TQC
-total_timesteps: 2_000_000
+total_timesteps: 200_000
 
 tqc:
   policy: MlpPolicy
   learning_rate: 3.0e-4
-  buffer_size: 1_000_000
+  buffer_size: 200_000
   batch_size: 256
   tau: 0.005
   gamma: 0.99
   train_freq: 1
   gradient_steps: 1
-  ent_coef: auto
   top_quantiles_to_drop_per_net: 2
   policy_kwargs:
-    net_arch: [256, 256]
-    n_critics: 5
-    n_quantiles: 25
+    net_arch: [128, 128]
+    n_critics: 3
+    n_quantiles: 20
+
+callbacks:
+  rollout_log_freq: 4_000
+  checkpoint_freq:  50_000
 
 eval:
-  freq: 50_000
-  n_episodes: 10
+  freq: 20_000
+  n_episodes: 5
   deterministic: true
+  final_n_episodes: 20
