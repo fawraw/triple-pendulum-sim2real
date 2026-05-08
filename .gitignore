@@ -29,6 +29,8 @@ assets/raw/
 *.mov
 *.avi
 !docs/**/*.mp4
+!assets/eval_*.mp4
+!assets/demo_*.mp4
 
 # Build / dist
 build/
