@@ -2,6 +2,10 @@
 
 **Goal:** First demonstration of all 56 equilibrium transitions of a physical triple inverted pendulum on a cart, controlled by a sim-to-real reinforcement-learning policy, without precomputed trajectories or system-specific feedforward controllers.
 
+| Bottom equilibrium (DDD) | Top equilibrium (UUU) |
+|:---:|:---:|
+| ![DDD](assets/pose_DDD.png) | ![UUU](assets/pose_UUU.png) |
+
 ## Why this matters
 
 A triple inverted pendulum on a cart has 8 equilibrium configurations (each link Up or Down: 2³). Moving between any two of them, 8 × 7 = **56 transitions**, is the most general control benchmark that exists for this system.
