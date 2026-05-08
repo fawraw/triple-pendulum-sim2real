@@ -1,0 +1,25 @@
+cff-version: 1.2.0
+title: >-
+  Sim-to-Real Reinforcement Learning for All 56 Equilibrium Transitions of a
+  Triple Inverted Pendulum
+message: If you use this work, please cite it as below.
+type: software
+authors:
+  - family-names: Saïd
+    given-names: Farid
+repository-code: https://github.com/fawraw/triple-pendulum-sim2real
+abstract: >-
+  Open-source project targeting the first sim-to-real reinforcement-learning
+  controller that performs all 56 transitions between the 8 equilibrium
+  configurations of a physical triple inverted pendulum on a cart. Includes
+  MuJoCo simulation, Gymnasium environment, training scripts (TQC, sb3-contrib),
+  hardware bill of materials, and reproducibility artifacts.
+keywords:
+  - reinforcement learning
+  - sim-to-real
+  - inverted pendulum
+  - control
+  - robotics
+  - mujoco
+  - tqc
+license: MIT
