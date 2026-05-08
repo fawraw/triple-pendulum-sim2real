@@ -87,22 +87,40 @@ class TriplePendulumEnv(gym.Env):
     def _obs(self) -> np.ndarray:
         return np.concatenate([self._joint_state(), self._target_onehot()]).astype(np.float32)
 
-    def _reward(self) -> float:
+    # Threshold past which the link is considered "fallen" and the episode is
+    # terminated. With near-target init, this gives a much sharper learning
+    # signal than running every episode to truncation.
+    FALL_THRESHOLD_RAD = 0.6  # ~34 degrees
+
+    def _angle_error(self) -> np.ndarray:
         st = self._joint_state()
         target = ep_target_angles(self.target_ep)
-        # Angular error wrapped to [-pi, pi]
         err = np.array([st[2], st[4], st[6]]) - target
-        err = np.arctan2(np.sin(err), np.cos(err))
+        return np.arctan2(np.sin(err), np.cos(err))
+
+    def _reward(self) -> float:
+        st = self._joint_state()
+        err = self._angle_error()
         ang_cost = float(np.sum(err ** 2))
         vel_cost = 0.01 * float(st[3] ** 2 + st[5] ** 2 + st[7] ** 2)
         cart_cost = 0.1 * float(st[0] ** 2)
         u = float(self.data.ctrl[0])
         ctrl_cost = 0.001 * u ** 2
-        return -(ang_cost + vel_cost + cart_cost + ctrl_cost)
+        # Per-step alive bonus to encourage long episodes near the target.
+        alive_bonus = 1.0
+        return alive_bonus - (ang_cost + vel_cost + cart_cost + ctrl_cost)
 
     def _terminated(self) -> bool:
         # Cart out of rail
-        return abs(self.data.qpos[0]) > 0.95
+        if abs(self.data.qpos[0]) > 0.95:
+            return True
+        # Any link tipped past the fall threshold (only meaningful for
+        # stabilization milestones; swing-up policies should override this).
+        if self.init_mode == "near_target":
+            err = self._angle_error()
+            if np.any(np.abs(err) > self.FALL_THRESHOLD_RAD):
+                return True
+        return False
 
     # --- gym API ---------------------------------------------------------
     def reset(self, *, seed: int | None = None, options: dict | None = None):
