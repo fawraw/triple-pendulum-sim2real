@@ -73,8 +73,8 @@ for the gap analysis backing the project.
 | Milestone | Status | Date |
 |---|---|---|
 | 0. Literature gap confirmed | ✅ | 2026-05-08 |
-| 1. MuJoCo model, 3 links on cart | 🟡 in progress | |
-| 2. Stable upright in sim (TQC) | ⬜ | |
+| 1. MuJoCo model, 3 links on cart | ✅ | 2026-05-08 |
+| 2. Stable upright in sim (TQC) | 🟡 partial | 2026-05-08 |
 | 3. All 8 EPs stabilized in sim | ⬜ | |
 | 4. 56 transitions in sim | ⬜ | |
 | 5. Domain randomization, robustness | ⬜ | |
@@ -83,6 +83,25 @@ for the gap analysis backing the project.
 | 8. All 56 transitions on hardware | ⬜ | |
 | 9. arXiv preprint | ⬜ | |
 | 10. Conference submission | ⬜ | |
+
+### M2 first results
+
+200K-step TQC run (network 128 by 128, 3 critics, 20 quantiles, init noise 0.05 rad
+near UUU). Mean episode length over 20 deterministic eval rollouts: 824 steps
+out of 1000 (about 16 seconds at 50 Hz), with a maximum of 1000 steps reached on
+several seeds. The acceptance threshold for M2 is 1000 steps over 80% of
+rollouts; we are not there yet, but the pipeline is fully validated end to end.
+
+![learning curve](assets/learning_curve_m2.png)
+
+The eval rollout below shows the policy holding the upright configuration for
+the full 20-second episode, sliding the cart along the rail to absorb angular
+momentum.
+
+![eval final pose](assets/eval_m2_upright.png)
+
+A 20-second video of this rollout is at
+[assets/eval_m2_upright.mp4](assets/eval_m2_upright.mp4).
 
 ## Repository layout
 
