@@ -1,0 +1,148 @@
+"""Gymnasium environment for the triple inverted pendulum on a cart.
+
+Observation: [x, dx, theta1, dtheta1, theta2, dtheta2, theta3, dtheta3, target_id_onehot...]
+Action: [u] continuous in [-1, 1], scaled to motor force by the XML actuator gear.
+Reward: shaped to encourage convergence toward the target equilibrium point.
+
+The 8 equilibrium points are encoded as 3-bit (link Up=1 / Down=0) configurations:
+    EP0 = DDD, EP1 = DDU, EP2 = DUD, EP3 = DUU,
+    EP4 = UDD, EP5 = UDU, EP6 = UUD, EP7 = UUU
+where the bit order is (theta1, theta2, theta3) with U meaning the link points up
+(theta = 0) and D meaning it points down (theta = pi) in absolute world frame.
+
+This is a stub for Milestone 1. Reward shaping, target conditioning and randomization
+will evolve in later milestones.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import gymnasium as gym
+import mujoco
+import numpy as np
+from gymnasium import spaces
+
+MODEL_PATH = Path(__file__).resolve().parents[1] / "models" / "triple_pendulum.xml"
+
+# Equilibrium target angles in absolute world frame (theta = 0 means link points up).
+# 3 bits = 8 EPs. Bit i (i in {0,1,2}) encodes link i+1.
+def ep_target_angles(ep_id: int) -> np.ndarray:
+    """Return target absolute angles [theta1, theta2, theta3] for equilibrium ep_id (0..7)."""
+    bits = [(ep_id >> i) & 1 for i in range(3)]  # bit 0 = link 1, etc.
+    return np.array([0.0 if b == 1 else np.pi for b in bits], dtype=np.float64)
+
+
+class TriplePendulumEnv(gym.Env):
+    metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 60}
+
+    def __init__(self, target_ep: int = 7, render_mode: str | None = None,
+                 max_episode_steps: int = 1500):
+        super().__init__()
+        self.model = mujoco.MjModel.from_xml_path(str(MODEL_PATH))
+        self.data = mujoco.MjData(self.model)
+        self.target_ep = int(target_ep)
+        self.max_episode_steps = max_episode_steps
+        self._step_count = 0
+        self.render_mode = render_mode
+        self._renderer = None
+
+        # 8 (joint state) + 8 (one-hot target EP)
+        high = np.array([np.inf] * 16, dtype=np.float32)
+        self.observation_space = spaces.Box(low=-high, high=high, dtype=np.float32)
+        self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(1,), dtype=np.float32)
+
+    # --- helpers ---------------------------------------------------------
+    def _joint_state(self) -> np.ndarray:
+        x = self.data.qpos[0]
+        dx = self.data.qvel[0]
+        # Hinge angles are stored relative to parent body. Recover absolute angles
+        # for clean equilibrium reasoning.
+        t1 = self.data.qpos[1]
+        t2 = t1 + self.data.qpos[2]
+        t3 = t2 + self.data.qpos[3]
+        d1 = self.data.qvel[1]
+        d2 = d1 + self.data.qvel[2]
+        d3 = d2 + self.data.qvel[3]
+        return np.array([x, dx, t1, d1, t2, d2, t3, d3], dtype=np.float32)
+
+    def _target_onehot(self) -> np.ndarray:
+        v = np.zeros(8, dtype=np.float32)
+        v[self.target_ep] = 1.0
+        return v
+
+    def _obs(self) -> np.ndarray:
+        return np.concatenate([self._joint_state(), self._target_onehot()]).astype(np.float32)
+
+    def _reward(self) -> float:
+        st = self._joint_state()
+        target = ep_target_angles(self.target_ep)
+        # Angular error wrapped to [-pi, pi]
+        err = np.array([st[2], st[4], st[6]]) - target
+        err = np.arctan2(np.sin(err), np.cos(err))
+        ang_cost = float(np.sum(err ** 2))
+        vel_cost = 0.01 * float(st[3] ** 2 + st[5] ** 2 + st[7] ** 2)
+        cart_cost = 0.1 * float(st[0] ** 2)
+        u = float(self.data.ctrl[0])
+        ctrl_cost = 0.001 * u ** 2
+        return -(ang_cost + vel_cost + cart_cost + ctrl_cost)
+
+    def _terminated(self) -> bool:
+        # Cart out of rail
+        return abs(self.data.qpos[0]) > 0.95
+
+    # --- gym API ---------------------------------------------------------
+    def reset(self, *, seed: int | None = None, options: dict | None = None):
+        super().reset(seed=seed)
+        mujoco.mj_resetData(self.model, self.data)
+        # Start from a random low-energy state near the bottom.
+        self.data.qpos[0] = self.np_random.uniform(-0.05, 0.05)
+        self.data.qpos[1] = np.pi + self.np_random.uniform(-0.05, 0.05)
+        self.data.qpos[2] = self.np_random.uniform(-0.05, 0.05)
+        self.data.qpos[3] = self.np_random.uniform(-0.05, 0.05)
+        self.data.qvel[:] = self.np_random.uniform(-0.01, 0.01, size=self.model.nv)
+        self._step_count = 0
+        if options and "target_ep" in options:
+            self.target_ep = int(options["target_ep"])
+        mujoco.mj_forward(self.model, self.data)
+        return self._obs(), {}
+
+    def step(self, action):
+        a = float(np.clip(action, -1.0, 1.0))
+        self.data.ctrl[0] = a
+        mujoco.mj_step(self.model, self.data)
+        self._step_count += 1
+        obs = self._obs()
+        reward = self._reward()
+        terminated = self._terminated()
+        truncated = self._step_count >= self.max_episode_steps
+        return obs, reward, terminated, truncated, {"target_ep": self.target_ep}
+
+    def render(self):
+        if self.render_mode is None:
+            return None
+        if self._renderer is None:
+            self._renderer = mujoco.Renderer(self.model, height=480, width=720)
+        self._renderer.update_scene(self.data, camera="track" if "track" in [
+            self.model.camera(i).name for i in range(self.model.ncam)
+        ] else -1)
+        return self._renderer.render()
+
+    def close(self):
+        if self._renderer is not None:
+            self._renderer.close()
+            self._renderer = None
+
+
+def make_env(target_ep: int = 7, **kwargs) -> TriplePendulumEnv:
+    return TriplePendulumEnv(target_ep=target_ep, **kwargs)
+
+
+if __name__ == "__main__":
+    env = make_env(target_ep=7)
+    obs, _ = env.reset(seed=0)
+    print("obs shape:", obs.shape, "obs:", obs)
+    for _ in range(5):
+        obs, r, term, trunc, info = env.step(env.action_space.sample())
+        print(f"r={r:+.3f}  term={term}  obs[:8]={obs[:8]}")
+    env.close()

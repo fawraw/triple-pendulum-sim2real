@@ -1,0 +1,32 @@
+# Milestone 2: train TQC to stabilize EP7 (UUU, all links upright) in simulation.
+# This is the easiest milestone: starting state is already near upright,
+# the policy only has to reject perturbations.
+
+env:
+  target_ep: 7         # UUU
+  max_episode_steps: 1500
+  init_noise: 0.05     # rad on each joint, m on cart
+
+algo: TQC
+total_timesteps: 2_000_000
+
+tqc:
+  policy: MlpPolicy
+  learning_rate: 3.0e-4
+  buffer_size: 1_000_000
+  batch_size: 256
+  tau: 0.005
+  gamma: 0.99
+  train_freq: 1
+  gradient_steps: 1
+  ent_coef: auto
+  top_quantiles_to_drop_per_net: 2
+  policy_kwargs:
+    net_arch: [256, 256]
+    n_critics: 5
+    n_quantiles: 25
+
+eval:
+  freq: 50_000
+  n_episodes: 10
+  deterministic: true

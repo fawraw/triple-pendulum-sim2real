@@ -1,0 +1,67 @@
+<mujoco model="triple_pendulum_cart">
+  <compiler angle="radian" coordinate="local" inertiafromgeom="true"/>
+
+  <option integrator="RK4" timestep="0.002" gravity="0 0 -9.81"/>
+
+  <default>
+    <joint armature="0" damping="0.001" limited="false"/>
+    <geom contype="0" conaffinity="0" friction="1 0.1 0.1" rgba="0.8 0.6 0.4 1"/>
+    <motor ctrlrange="-1 1" ctrllimited="true"/>
+  </default>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="512"/>
+    <texture name="floor" type="2d" builtin="checker" rgb1="0.2 0.3 0.4" rgb2="0.1 0.2 0.3" width="512" height="512"/>
+    <material name="floor" texture="floor" texrepeat="4 4" reflectance="0.2"/>
+  </asset>
+
+  <worldbody>
+    <light directional="true" diffuse="0.7 0.7 0.7" specular="0.2 0.2 0.2" pos="0 0 2" dir="0 0 -1"/>
+    <geom name="floor" type="plane" pos="0 0 -0.05" size="2 1 0.1" material="floor"/>
+
+    <!-- Rail visualization -->
+    <geom name="rail" type="box" pos="0 0 0" size="1.0 0.02 0.005" rgba="0.4 0.4 0.4 0.5"/>
+
+    <!-- Cart -->
+    <body name="cart" pos="0 0 0">
+      <joint name="slider" type="slide" axis="1 0 0" range="-0.95 0.95" damping="0.1"/>
+      <geom name="cart_geom" type="box" size="0.05 0.04 0.03" mass="0.5" rgba="0.2 0.4 0.8 1"/>
+
+      <!-- Pole 1 (lower link, attached to cart) -->
+      <body name="pole1" pos="0 0 0.03">
+        <joint name="hinge1" type="hinge" axis="0 1 0" damping="0.0005"/>
+        <geom name="pole1_geom" type="capsule" fromto="0 0 0 0 0 0.25" size="0.005" mass="0.10" rgba="0.9 0.3 0.3 1"/>
+
+        <!-- Pole 2 (middle link) -->
+        <body name="pole2" pos="0 0 0.25">
+          <joint name="hinge2" type="hinge" axis="0 1 0" damping="0.0003"/>
+          <geom name="pole2_geom" type="capsule" fromto="0 0 0 0 0 0.25" size="0.004" mass="0.08" rgba="0.3 0.9 0.3 1"/>
+
+          <!-- Pole 3 (top link) -->
+          <body name="pole3" pos="0 0 0.25">
+            <joint name="hinge3" type="hinge" axis="0 1 0" damping="0.0002"/>
+            <geom name="pole3_geom" type="capsule" fromto="0 0 0 0 0 0.25" size="0.0035" mass="0.05" rgba="0.3 0.3 0.9 1"/>
+            <site name="tip" pos="0 0 0.25" size="0.008" rgba="1 1 0 1"/>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+
+  <actuator>
+    <!-- Cart force actuator. ctrl in [-1,1] scaled by gear to a real-world force. -->
+    <motor name="cart_motor" joint="slider" gear="15" ctrlrange="-1 1"/>
+  </actuator>
+
+  <sensor>
+    <jointpos name="cart_pos" joint="slider"/>
+    <jointvel name="cart_vel" joint="slider"/>
+    <jointpos name="theta1" joint="hinge1"/>
+    <jointvel name="dtheta1" joint="hinge1"/>
+    <jointpos name="theta2" joint="hinge2"/>
+    <jointvel name="dtheta2" joint="hinge2"/>
+    <jointpos name="theta3" joint="hinge3"/>
+    <jointvel name="dtheta3" joint="hinge3"/>
+    <framepos name="tip_pos" objtype="site" objname="tip"/>
+  </sensor>
+</mujoco>

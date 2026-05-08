@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Training artifacts
+mlruns/
+checkpoints/
+logs/
+runs/
+wandb/
+*.zip
+*.pt
+*.pth
+
+# Media (heavy)
+assets/raw/
+*.mp4
+*.mov
+*.avi
+!docs/**/*.mp4
+
+# Build / dist
+build/
+dist/
+*.egg-info/
+
+# Hardware temp files
+hardware/cad/*.FCBak
+hardware/cad/*.bak
