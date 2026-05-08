@@ -108,7 +108,8 @@ class TriplePendulumEnv(gym.Env):
         return self._obs(), {}
 
     def step(self, action):
-        a = float(np.clip(action, -1.0, 1.0))
+        a = float(np.asarray(action, dtype=np.float64).reshape(-1)[0])
+        a = max(-1.0, min(1.0, a))
         self.data.ctrl[0] = a
         mujoco.mj_step(self.model, self.data)
         self._step_count += 1
