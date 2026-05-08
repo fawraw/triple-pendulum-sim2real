@@ -20,6 +20,34 @@ A triple inverted pendulum on a cart has 8 equilibrium configurations (each link
 
 The intersection (triple pendulum, Sim2Real RL, all 56 transitions) has never been demonstrated in the literature as of May 2026.
 
+## Quickstart
+
+```bash
+git clone https://github.com/fawraw/triple-pendulum-sim2real.git
+cd triple-pendulum-sim2real
+./scripts/setup_env.sh                # creates .venv with MuJoCo, Gymnasium, SB3, TQC
+source .venv/bin/activate
+
+# Sanity check the environment
+MUJOCO_GL=osmesa python -m sim.envs.triple_pendulum_env
+
+# Train milestone 2 (stabilize UUU). Logs to ./mlruns by default.
+MUJOCO_GL=osmesa python -m training.train_m2_upright
+
+# Render a deterministic rollout of a trained policy
+MUJOCO_GL=osmesa python scripts/eval_policy.py \
+    --checkpoint checkpoints/<run_name>/final.zip --out assets/eval.mp4
+```
+
+The `setup_env.sh` script needs Python 3.10 or newer. On macOS install
+`python@3.11` first via Homebrew. To log experiments to a remote MLflow
+tracking server instead of the local `mlruns/` folder, export
+`MLFLOW_TRACKING_URI` before training.
+
+See [docs/roadmap.md](docs/roadmap.md) for the full milestone plan and
+[docs/literature/state_of_the_art.md](docs/literature/state_of_the_art.md)
+for the gap analysis backing the project.
+
 ## Approach
 
 1. **Modeling.** High-fidelity MuJoCo XML of the cart-pole-pole-pole system, parameterized by physical constants.
