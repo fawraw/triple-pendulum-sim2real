@@ -37,12 +37,25 @@ class TriplePendulumEnv(gym.Env):
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 60}
 
     def __init__(self, target_ep: int = 7, render_mode: str | None = None,
-                 max_episode_steps: int = 1500):
+                 max_episode_steps: int = 1500,
+                 init_mode: str = "near_target", init_noise: float = 0.05):
+        """
+        init_mode:
+          - "near_target": start with link angles within `init_noise` of the target EP.
+            Use this for the stabilization milestone (M2, M3).
+          - "bottom":      start near the natural rest configuration (DDD).
+            Use this for swing-up and full transition control (M4+).
+          - "random":      start with all link angles uniformly in [-pi, pi].
+            Use this once the policy is robust enough.
+        init_noise: scale of the uniform noise applied to qpos/qvel at reset (rad / rad/s).
+        """
         super().__init__()
         self.model = mujoco.MjModel.from_xml_path(str(MODEL_PATH))
         self.data = mujoco.MjData(self.model)
         self.target_ep = int(target_ep)
         self.max_episode_steps = max_episode_steps
+        self.init_mode = init_mode
+        self.init_noise = float(init_noise)
         self._step_count = 0
         self.render_mode = render_mode
         self._renderer = None
@@ -95,15 +108,31 @@ class TriplePendulumEnv(gym.Env):
     def reset(self, *, seed: int | None = None, options: dict | None = None):
         super().reset(seed=seed)
         mujoco.mj_resetData(self.model, self.data)
-        # Start from a random low-energy state near the bottom.
-        self.data.qpos[0] = self.np_random.uniform(-0.05, 0.05)
-        self.data.qpos[1] = np.pi + self.np_random.uniform(-0.05, 0.05)
-        self.data.qpos[2] = self.np_random.uniform(-0.05, 0.05)
-        self.data.qpos[3] = self.np_random.uniform(-0.05, 0.05)
-        self.data.qvel[:] = self.np_random.uniform(-0.01, 0.01, size=self.model.nv)
-        self._step_count = 0
         if options and "target_ep" in options:
             self.target_ep = int(options["target_ep"])
+        if options and "init_mode" in options:
+            self.init_mode = str(options["init_mode"])
+
+        n = float(self.init_noise)
+        self.data.qpos[0] = self.np_random.uniform(-n, n)
+
+        if self.init_mode == "bottom":
+            t1, t2, t3 = np.pi, np.pi, np.pi
+        elif self.init_mode == "random":
+            t1 = self.np_random.uniform(-np.pi, np.pi)
+            t2 = self.np_random.uniform(-np.pi, np.pi)
+            t3 = self.np_random.uniform(-np.pi, np.pi)
+        else:  # "near_target"
+            t1, t2, t3 = ep_target_angles(self.target_ep)
+
+        # Convert absolute angles back to relative hinge coordinates.
+        # MuJoCo hinge2 is parented to pole1, hinge3 to pole2, so:
+        #   absolute_t2 = qpos[1] + qpos[2]  =>  qpos[2] = t2 - t1
+        self.data.qpos[1] = t1 + self.np_random.uniform(-n, n)
+        self.data.qpos[2] = (t2 - t1) + self.np_random.uniform(-n, n)
+        self.data.qpos[3] = (t3 - t2) + self.np_random.uniform(-n, n)
+        self.data.qvel[:] = self.np_random.uniform(-0.01, 0.01, size=self.model.nv)
+        self._step_count = 0
         mujoco.mj_forward(self.model, self.data)
         return self._obs(), {}
 
