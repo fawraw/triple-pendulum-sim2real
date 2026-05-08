@@ -142,7 +142,15 @@ def main(cfg_path: str) -> None:
         mlflow.log_metric("train_wall_seconds", elapsed)
         save_path = ROOT / "checkpoints" / run_name / "final.zip"
         model.save(str(save_path))
-        mlflow.log_artifact(str(save_path), artifact_path="model")
+        # Best-effort artifact logging. If the MLflow server is configured
+        # without --serve-artifacts, the local artifact root is on a
+        # different host and log_artifact will fail; we surface the path
+        # via a tag instead so the run is still useful.
+        try:
+            mlflow.log_artifact(str(save_path), artifact_path="model")
+        except Exception as exc:
+            mlflow.set_tag("artifact_path_local", str(save_path))
+            mlflow.set_tag("artifact_log_error", repr(exc)[:500])
 
         rewards = []
         for _ in range(int(eval_cfg.get("final_n_episodes", 20))):
