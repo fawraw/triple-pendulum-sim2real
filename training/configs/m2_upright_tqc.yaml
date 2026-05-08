@@ -9,7 +9,7 @@ env:
   init_noise: 0.05
 
 algo: TQC
-total_timesteps: 200_000
+total_timesteps: 150_000
 
 tqc:
   policy: MlpPolicy
