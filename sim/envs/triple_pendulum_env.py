@@ -98,7 +98,29 @@ class TriplePendulumEnv(gym.Env):
         err = np.array([st[2], st[4], st[6]]) - target
         return np.arctan2(np.sin(err), np.cos(err))
 
-    def _reward(self) -> float:
+    # Penalty applied at the terminal step when the policy fails (cart
+    # off-rail or any link tipped past FALL_THRESHOLD_RAD). Without this,
+    # early termination removes accumulated cost rather than penalizing
+    # failure, which gives a flat-reward landscape where doing nothing is
+    # a fixed-point optimum.
+    FALL_PENALTY = 100.0
+
+    def _angle_error(self) -> np.ndarray:
+        st = self._joint_state()
+        target = ep_target_angles(self.target_ep)
+        err = np.array([st[2], st[4], st[6]]) - target
+        return np.arctan2(np.sin(err), np.cos(err))
+
+    def _is_fallen(self) -> bool:
+        if abs(self.data.qpos[0]) > 0.95:
+            return True
+        if self.init_mode == "near_target":
+            err = self._angle_error()
+            if np.any(np.abs(err) > self.FALL_THRESHOLD_RAD):
+                return True
+        return False
+
+    def _reward(self, fallen: bool) -> float:
         st = self._joint_state()
         err = self._angle_error()
         ang_cost = float(np.sum(err ** 2))
@@ -106,21 +128,13 @@ class TriplePendulumEnv(gym.Env):
         cart_cost = 0.1 * float(st[0] ** 2)
         u = float(self.data.ctrl[0])
         ctrl_cost = 0.001 * u ** 2
-        # Per-step alive bonus to encourage long episodes near the target.
-        alive_bonus = 1.0
-        return alive_bonus - (ang_cost + vel_cost + cart_cost + ctrl_cost)
+        r = -(ang_cost + vel_cost + cart_cost + ctrl_cost)
+        if fallen:
+            r -= self.FALL_PENALTY
+        return r
 
     def _terminated(self) -> bool:
-        # Cart out of rail
-        if abs(self.data.qpos[0]) > 0.95:
-            return True
-        # Any link tipped past the fall threshold (only meaningful for
-        # stabilization milestones; swing-up policies should override this).
-        if self.init_mode == "near_target":
-            err = self._angle_error()
-            if np.any(np.abs(err) > self.FALL_THRESHOLD_RAD):
-                return True
-        return False
+        return self._is_fallen()
 
     # --- gym API ---------------------------------------------------------
     def reset(self, *, seed: int | None = None, options: dict | None = None):
@@ -161,8 +175,9 @@ class TriplePendulumEnv(gym.Env):
         mujoco.mj_step(self.model, self.data)
         self._step_count += 1
         obs = self._obs()
-        reward = self._reward()
-        terminated = self._terminated()
+        fallen = self._is_fallen()
+        reward = self._reward(fallen)
+        terminated = fallen
         truncated = self._step_count >= self.max_episode_steps
         return obs, reward, terminated, truncated, {"target_ep": self.target_ep}
 
