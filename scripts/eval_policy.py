@@ -38,7 +38,7 @@ def main():
     obs, _ = env.reset(seed=args.seed)
     model = TQC.load(args.checkpoint, env=None)
 
-    renderer = mujoco.Renderer(env.model, height=480, width=640)
+    renderer = mujoco.Renderer(env.model, height=720, width=1280)
 
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -52,13 +52,13 @@ def main():
             action, _ = model.predict(obs, deterministic=True)
             obs, r, done, truncated, _ = env.step(action)
             rewards.append(float(r))
-            renderer.update_scene(env.data)
+            renderer.update_scene(env.data, camera="track")
             writer.append_data(renderer.render())
     finally:
         writer.close()
 
     final_png = out_path.with_suffix(".png")
-    renderer.update_scene(env.data)
+    renderer.update_scene(env.data, camera="track")
     iio.imwrite(str(final_png), renderer.render())
 
     print(f"Saved: {out_path}")
