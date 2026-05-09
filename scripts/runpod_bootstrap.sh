@@ -97,21 +97,31 @@ fi
 git log --oneline -1
 
 # 2. Install Python deps. Two complications on the runpod/pytorch image:
-#   a) blinker is installed via apt as python3-blinker; pip refuses to uninstall
-#      it. Use --ignore-installed to bypass the uninstall step.
-#   b) The image ships torch 2.4.x compiled against CUDA 12.4 to match the
-#      host's NVIDIA driver. Our requirements.txt has `torch>=2.2`, which lets
-#      pip pick up torch 2.11 (CUDA 13) — INCOMPATIBLE with the host driver,
-#      so torch.cuda.is_available() returns False at runtime. Skip torch in
-#      the bootstrap install: the image's pre-installed version is correct.
+#
+#   a) blinker is apt-installed as python3-blinker (distutils-managed). pip
+#      refuses to uninstall distutils-tracked packages, so the entire install
+#      aborts when mlflow → Flask → blinker pulls a blinker upgrade. Fix:
+#      pre-install blinker via pip (--ignore-installed --no-deps) so it
+#      becomes pip-managed; subsequent pip installs can then upgrade it
+#      cleanly.
+#
+#   b) The image ships torch 2.4.x + CUDA 12.4 user-space, matched to the
+#      host driver (CUDA 12.7). Using `pip install --ignore-installed -r
+#      requirements.txt` would force-reinstall torch and pip would resolve
+#      `torch>=2.2` to the latest (torch 2.11, CUDA 13) — INCOMPATIBLE with
+#      the host driver. Solution: regular pip install (no --ignore-installed)
+#      with default upgrade-strategy=only-if-needed, so torch 2.4.1 already
+#      installed satisfies the >=2.2 constraint and is NOT touched.
 pip install --upgrade pip
-grep -vE '^\s*torch(\s|>|=|<|$)' requirements.txt > /tmp/requirements_no_torch.txt
-echo "[bootstrap] installing requirements (torch excluded — using image's pre-installed version)"
-pip install --ignore-installed -r /tmp/requirements_no_torch.txt
+echo "[bootstrap] pre-installing blinker via pip to bypass apt distutils conflict"
+pip install --ignore-installed --no-deps blinker
+echo "[bootstrap] installing requirements.txt (default upgrade strategy keeps image's torch 2.4.1)"
+pip install -r requirements.txt
 python -c "
 import torch, mlflow, sb3_contrib, mujoco
-print(f'deps OK | torch {torch.__version__} (cuda={torch.cuda.is_available()}) | mlflow {mlflow.__version__} | sb3_contrib {sb3_contrib.__version__} | mujoco {mujoco.__version__}')
-assert torch.cuda.is_available(), 'CUDA not available — driver/torch mismatch'
+cuda_ok = torch.cuda.is_available()
+print(f'deps OK | torch {torch.__version__} (cuda={cuda_ok}) | mlflow {mlflow.__version__} | sb3_contrib {sb3_contrib.__version__} | mujoco {mujoco.__version__}')
+assert cuda_ok, f'CUDA not available — driver mismatch (torch {torch.__version__} expects newer driver?)'
 "
 
 # 3. Run training
