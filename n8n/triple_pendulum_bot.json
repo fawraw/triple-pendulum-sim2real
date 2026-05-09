@@ -1,0 +1,63 @@
+{
+  "name": "Triple Pendulum Bot",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "seconds",
+              "secondsInterval": 20
+            }
+          ]
+        }
+      },
+      "id": "b0000001-0001-0001-0001-000000000001",
+      "name": "Every 20s",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "language": "javaScript",
+        "jsCode": "// ---- CONFIG (placeholders, replaced by sync to live n8n) ----\nconst TELEGRAM_BOT_TOKEN = 'YOUR_TELEGRAM_BOT_TOKEN';\nconst ALLOWED_CHAT_IDS = [935389847];\nconst LAUNCHER_URL = 'http://10.1.4.232:8765';\nconst LAUNCHER_SECRET = 'YOUR_LAUNCHER_SECRET';\nconst MLFLOW_URL = 'http://10.1.4.230:5000';\nconst RUNPOD_API_KEY = 'YOUR_RUNPOD_API_KEY';\nconst RUNPOD_POD_ID = 'YOUR_RUNPOD_POD_ID';\n\n// ---- POLL TELEGRAM getUpdates (long-poll style) ----\n// Use staticData to track the last update_id we processed across executions.\nconst staticData = $getWorkflowStaticData('global');\nconst lastOffset = staticData.lastOffset || 0;\n\nlet updates = [];\ntry {\n  const r = await this.helpers.httpRequest({\n    method: 'GET',\n    url: `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getUpdates`,\n    qs: { offset: lastOffset + 1, timeout: 0, allowed_updates: 'message' },\n    json: true,\n    timeout: 8000,\n  });\n  if (r.ok && Array.isArray(r.result)) updates = r.result;\n} catch (e) {\n  // Telegram down or transient — skip this tick\n  return [];\n}\n\nif (updates.length === 0) return [];\n\n// Advance offset BEFORE processing so a slow handler can't infinite-loop.\nstaticData.lastOffset = Math.max(...updates.map(u => u.update_id));\n\n// ---- HELPERS ----\nasync function gqlRunPod(query) {\n  return await this.helpers.httpRequest({\n    method: 'POST',\n    url: 'https://api.runpod.io/graphql',\n    headers: {\n      'Authorization': `Bearer ${RUNPOD_API_KEY}`,\n      'Content-Type': 'application/json',\n    },\n    body: { query },\n    json: true,\n    timeout: 8000,\n  });\n}\n\nasync function getRunPodStatus() {\n  try {\n    const q = `query { pod(input: {podId: \"${RUNPOD_POD_ID}\"}) { id name desiredStatus costPerHr runtime { uptimeInSeconds gpus { gpuUtilPercent memoryUtilPercent } } } }`;\n    const r = await this.helpers.httpRequest({\n      method: 'POST',\n      url: 'https://api.runpod.io/graphql',\n      headers: { 'Authorization': `Bearer ${RUNPOD_API_KEY}`, 'Content-Type': 'application/json' },\n      body: { query: q },\n      json: true,\n      timeout: 8000,\n    });\n    return r.data?.pod;\n  } catch (e) {\n    return { _error: String(e).slice(0, 200) };\n  }\n}\n\nasync function getLauncherStatus() {\n  try {\n    return await this.helpers.httpRequest({ url: `${LAUNCHER_URL}/status`, json: true, timeout: 5000 });\n  } catch (e) {\n    return { _error: 'launcher unreachable' };\n  }\n}\n\nasync function getMLflowRecent(n=3) {\n  try {\n    const r = await this.helpers.httpRequest({\n      method: 'POST',\n      url: `${MLFLOW_URL}/api/2.0/mlflow/runs/search`,\n      headers: { 'Content-Type': 'application/json' },\n      body: { experiment_ids: ['1','2'], max_results: n, order_by: ['start_time DESC'] },\n      json: true,\n      timeout: 5000,\n    });\n    return r.runs || [];\n  } catch (e) {\n    return [];\n  }\n}\n\nfunction fmtUptime(seconds) {\n  if (!seconds) return '0s';\n  const h = Math.floor(seconds/3600);\n  const m = Math.floor((seconds%3600)/60);\n  const s = seconds%60;\n  return h ? `${h}h${m}m` : (m ? `${m}m${s}s` : `${s}s`);\n}\n\nfunction fmtRunPod(pod) {\n  if (!pod) return 'pod not found';\n  if (pod._error) return `error: ${pod._error}`;\n  const rt = pod.runtime;\n  if (!rt) return `pod ${pod.desiredStatus} (no runtime)`;\n  const g = rt.gpus?.[0] || {};\n  const cost = (rt.uptimeInSeconds * pod.costPerHr / 3600).toFixed(2);\n  return `*${pod.name}* ${pod.desiredStatus}\\n  uptime: ${fmtUptime(rt.uptimeInSeconds)}  cost: \\\\$${cost}\\n  gpu: ${g.gpuUtilPercent ?? '?'}%  mem: ${g.memoryUtilPercent ?? '?'}%`;\n}\n\nfunction fmtMLflowRuns(runs) {\n  if (!runs.length) return '_no recent runs_';\n  return runs.map(r => {\n    const m = (r.data?.metrics || []).reduce((a,x) => (a[x.key]=x.value, a), {});\n    const name = (r.info.run_name || '?').slice(0,30);\n    const sts = r.info.status;\n    const ts = m.timesteps;\n    const rew = m.rollout_ep_rew_mean;\n    const succ = m.final_overall_success_rate;\n    let line = `\\`${name}\\` ${sts}`;\n    if (ts != null) line += `  ${(ts/1000).toFixed(0)}K steps`;\n    if (rew != null) line += `  rew=${rew.toFixed(0)}`;\n    if (succ != null) line += `  *succ=${(succ*100).toFixed(0)}%*`;\n    return '  ' + line;\n  }).join('\\n');\n}\n\nasync function handleCommand(message) {\n  const chat_id = message.chat?.id;\n  const text = (message.text || '').trim();\n  if (!ALLOWED_CHAT_IDS.includes(chat_id)) {\n    return { chat_id, text: `Unauthorized chat_id: ${chat_id}` };\n  }\n  const tokens = text.split(/\\s+/);\n  const cmd = tokens[0].toLowerCase();\n  const args = tokens.slice(1);\n  let reply = '';\n\n  if (cmd === '/start' || cmd === '/help') {\n    reply = `*Triple Pendulum Bot* — commands:\\n\\n` +\n      `\\`/status\\` — overall pipeline\\n` +\n      `\\`/runpod\\` — RunPod pod state + GPU + cost\\n` +\n      `\\`/ct1018\\` — local launcher (active sessions)\\n` +\n      `\\`/mlflow [n]\\` — last n MLflow runs\\n` +\n      `\\`/gpu\\` — RunPod GPU one-liner\\n` +\n      `\\`/launch m3b|m3c|m4|m2\\` — launch on CT 1018\\n` +\n      `\\`/pod_start\\` — resume RunPod pod\\n` +\n      `\\`/pod_stop\\` — stop RunPod pod\\n` +\n      `\\`/help\\` — this message`;\n  }\n  else if (cmd === '/status') {\n    const [pod, launcher, runs] = await Promise.all([\n      getRunPodStatus.call(this),\n      getLauncherStatus.call(this),\n      getMLflowRecent.call(this, 3),\n    ]);\n    reply = `*Triple Pendulum status*\\n\\n` +\n      `🌐 *RunPod*\\n${fmtRunPod(pod)}\\n\\n` +\n      `🖥 *CT 1018 launcher*\\n  ${launcher._error ? launcher._error : `${launcher.count || 0} active processes`}\\n\\n` +\n      `📊 *MLflow* (latest)\\n${fmtMLflowRuns(runs)}`;\n  }\n  else if (cmd === '/runpod') {\n    const pod = await getRunPodStatus.call(this);\n    reply = `🌐 *RunPod*\\n${fmtRunPod(pod)}`;\n  }\n  else if (cmd === '/ct1018') {\n    const launcher = await getLauncherStatus.call(this);\n    if (launcher._error) {\n      reply = `🖥 *CT 1018* — ${launcher._error}`;\n    } else {\n      const sessions = (launcher.sessions || []).slice(0,3).map(s => `  • \\`${s.slice(0,80)}\\``).join('\\n');\n      reply = `🖥 *CT 1018* — ${launcher.count} active\\n${sessions || '  _none_'}`;\n    }\n  }\n  else if (cmd === '/mlflow') {\n    const n = parseInt(args[0]) || 3;\n    const runs = await getMLflowRecent.call(this, Math.min(n, 10));\n    reply = `📊 *MLflow* — last ${runs.length}\\n${fmtMLflowRuns(runs)}`;\n  }\n  else if (cmd === '/gpu') {\n    const pod = await getRunPodStatus.call(this);\n    if (!pod || pod._error) reply = `RunPod: ${pod?._error || 'not reachable'}`;\n    else {\n      const g = pod.runtime?.gpus?.[0];\n      reply = g ? `GPU ${g.gpuUtilPercent}% util / ${g.memoryUtilPercent}% mem` : 'no runtime';\n    }\n  }\n  else if (cmd === '/launch') {\n    const stage = (args[0] || '').toLowerCase();\n    const stageMap = {\n      'm2':  { module: 'training.train_m2_upright',     config: 'training/configs/m2_upright_tqc.yaml' },\n      'm3b': { module: 'training.train_m3_all_eps',     config: 'training/configs/m3b_all_eps_tqc.yaml' },\n      'm3c': { module: 'training.train_m3_all_eps',     config: 'training/configs/m3c_all_eps_tqc.yaml' },\n      'm4':  { module: 'training.train_m4_transitions', config: 'training/configs/m4_transitions_tqc.yaml' },\n    };\n    if (!stageMap[stage]) {\n      reply = `Unknown stage: \\`${stage}\\`\\nValid: m2, m3b, m3c, m4`;\n    } else {\n      try {\n        const r = await this.helpers.httpRequest({\n          method: 'POST',\n          url: `${LAUNCHER_URL}/launch`,\n          headers: { 'Content-Type': 'application/json' },\n          body: { secret: LAUNCHER_SECRET, ...stageMap[stage] },\n          json: true,\n          timeout: 15000,\n        });\n        reply = r.ok\n          ? `✅ Launched *${stage.toUpperCase()}*\\nsession: \\`${r.session}\\``\n          : `❌ Launch failed: ${r.error || JSON.stringify(r)}`;\n      } catch (e) {\n        reply = `❌ Launcher error: ${String(e).slice(0,200)}`;\n      }\n    }\n  }\n  else if (cmd === '/pod_start') {\n    try {\n      const r = await gqlRunPod.call(this, `mutation { podResume(input: {podId: \"${RUNPOD_POD_ID}\", gpuCount: 1}) { id desiredStatus } }`);\n      const s = r.data?.podResume?.desiredStatus;\n      reply = s ? `🌐 RunPod resumed: *${s}*` : `❌ resume failed`;\n    } catch (e) { reply = `❌ ${String(e).slice(0,200)}`; }\n  }\n  else if (cmd === '/pod_stop') {\n    try {\n      const r = await gqlRunPod.call(this, `mutation { podStop(input: {podId: \"${RUNPOD_POD_ID}\"}) { id desiredStatus } }`);\n      const s = r.data?.podStop?.desiredStatus;\n      reply = s ? `🌐 RunPod stopped: *${s}*` : `❌ stop failed`;\n    } catch (e) { reply = `❌ ${String(e).slice(0,200)}`; }\n  }\n  else {\n    reply = `Unknown command: \\`${cmd}\\`\\nTry \\`/help\\``;\n  }\n  return { chat_id, text: reply };\n}\n\n// Process all updates serially. Each update produces ONE outgoing message.\nconst items = [];\nfor (const upd of updates) {\n  const msg = upd.message;\n  if (!msg || !msg.text) continue;\n  const r = await handleCommand.call(this, msg);\n  items.push({ json: { ...r, parse_mode: 'Markdown', disable_web_page_preview: true, telegramBotUrl: `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage` } });\n}\nreturn items;\n"
+      },
+      "id": "b0000002-0002-0002-0002-000000000002",
+      "name": "Poll + Dispatch",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.telegramBotUrl }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ chat_id: $json.chat_id, text: $json.text, parse_mode: $json.parse_mode, disable_web_page_preview: true }) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "b0000003-0003-0003-0003-000000000003",
+      "name": "Send Reply",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [720, 300]
+    }
+  ],
+  "connections": {
+    "Every 20s": {
+      "main": [[{ "node": "Poll + Dispatch", "type": "main", "index": 0 }]]
+    },
+    "Poll + Dispatch": {
+      "main": [[{ "node": "Send Reply", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  }
+}
