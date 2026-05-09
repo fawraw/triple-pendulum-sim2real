@@ -59,14 +59,14 @@ The training stages run unattended on a dedicated host. n8n decides what to do a
 
 ```mermaid
 flowchart LR
-    A[Training script<br/>train_m{2,3,4}*.py] -->|writes results.json| B[pipeline_notifier.py]
-    B -->|POST webhook| C{n8n<br/>orchestrator}
-    C -->|metric ≥ threshold| D[Launcher API<br/>:8765/launch]
-    C -->|metric &lt; threshold| E[Launcher API<br/>fallback config]
+    A["Training script<br/>train_m2/m3/m4_*.py"] -->|writes results.json| B[pipeline_notifier.py]
+    B -->|POST webhook| C{{n8n orchestrator}}
+    C -->|"metric &ge; threshold"| D["Launcher API<br/>:8765/launch"]
+    C -->|"metric &lt; threshold"| E["Launcher API<br/>fallback config"]
     C -->|HUMAN_REVIEW| F[Telegram alert]
     D -->|tmux new-session| A
     E -->|tmux new-session| A
-    A -.->|metrics| G[(MLflow<br/>10.1.4.230)]
+    A -.->|metrics| G[("MLflow<br/>10.1.4.230")]
 ```
 
 | Stage | Pass criterion | On pass | On fail |
