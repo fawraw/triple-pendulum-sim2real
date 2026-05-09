@@ -67,16 +67,19 @@ class MLflowRolloutLogger(BaseCallback):
             return True
         self._last = self.num_timesteps
         sps = self.num_timesteps / max(1e-3, time.time() - self._t0)
-        mlflow.log_metric("timesteps", self.num_timesteps, step=self.num_timesteps)
-        mlflow.log_metric("steps_per_s", float(sps), step=self.num_timesteps)
         rewards = [ep["r"] for ep in self.model.ep_info_buffer][-50:]
-        if rewards:
-            mlflow.log_metric("rollout_ep_rew_mean", float(np.mean(rewards)),
-                              step=self.num_timesteps)
-            mlflow.log_metric("rollout_ep_rew_min", float(np.min(rewards)),
-                              step=self.num_timesteps)
-            mlflow.log_metric("rollout_ep_rew_max", float(np.max(rewards)),
-                              step=self.num_timesteps)
+        try:
+            mlflow.log_metric("timesteps", self.num_timesteps, step=self.num_timesteps)
+            mlflow.log_metric("steps_per_s", float(sps), step=self.num_timesteps)
+            if rewards:
+                mlflow.log_metric("rollout_ep_rew_mean", float(np.mean(rewards)),
+                                  step=self.num_timesteps)
+                mlflow.log_metric("rollout_ep_rew_min", float(np.min(rewards)),
+                                  step=self.num_timesteps)
+                mlflow.log_metric("rollout_ep_rew_max", float(np.max(rewards)),
+                                  step=self.num_timesteps)
+        except Exception as e:
+            print(f"[MLflowRolloutLogger] log failed at step {self.num_timesteps}: {e}", flush=True)
         return True
 
 
