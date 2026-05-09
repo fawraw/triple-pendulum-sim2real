@@ -17,29 +17,56 @@ Endpoints:
 """
 from __future__ import annotations
 
+import hmac
 import json
 import logging
 import os
 import subprocess
+import sys
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
+from socketserver import ThreadingMixIn
 
 REPO = os.environ.get("TRIPLE_PENDULUM_REPO", "/opt/triple-pendulum/repo")
 VENV = os.environ.get("TRIPLE_PENDULUM_VENV", "/opt/triple-pendulum/.venv")
 MLFLOW_URI = os.environ.get("MLFLOW_TRACKING_URI", "http://10.1.4.230:5000")
 N8N_WEBHOOK = os.environ.get("N8N_PIPELINE_WEBHOOK", "")
 N8N_SECRET = os.environ.get("N8N_PIPELINE_SECRET", "")
-SECRET = os.environ.get("LAUNCHER_SECRET", "YOUR_LAUNCHER_SECRET")
+SECRET = os.environ.get("LAUNCHER_SECRET", "")
 PORT = int(os.environ.get("LAUNCHER_PORT", "8765"))
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("launcher")
+
+_PLACEHOLDER = "YOUR_LAUNCHER_SECRET"
+
+if not SECRET or SECRET == _PLACEHOLDER:
+    log.error("LAUNCHER_SECRET is not set or is a placeholder — refusing to start.")
+    sys.exit(1)
 
 ALLOWED_MODULES = {
     "training.train_m2_upright",
     "training.train_m3_all_eps",
     "training.train_m4_transitions",
 }
+
+
+def _active_train_sessions() -> list[str]:
+    result = subprocess.run(["tmux", "list-sessions"], capture_output=True, text=True)
+    if result.returncode != 0:
+        return []
+    return [s for s in result.stdout.strip().splitlines() if "train_" in s]
+
+
+def _valid_config(config: str) -> bool:
+    if not config or not config.endswith(".yaml"):
+        return False
+    try:
+        resolved = Path(REPO, config).resolve()
+        return resolved.is_relative_to(Path(REPO).resolve())
+    except Exception:
+        return False
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -63,8 +90,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.path != "/status":
             self._json(404, {"error": "not found"})
             return
-        result = subprocess.run(["tmux", "list-sessions"], capture_output=True, text=True)
-        sessions = [s for s in result.stdout.strip().splitlines() if "train_" in s]
+        sessions = _active_train_sessions()
         self._json(200, {"sessions": sessions, "count": len(sessions)})
 
     def do_POST(self):
@@ -77,7 +103,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json(400, {"error": "invalid JSON"})
             return
 
-        if data.get("secret") != SECRET:
+        incoming = data.get("secret", "")
+        if not hmac.compare_digest(incoming, SECRET):
             log.warning("rejected launch: wrong secret from %s", self.address_string())
             self._json(403, {"error": "forbidden"})
             return
@@ -88,8 +115,14 @@ class Handler(BaseHTTPRequestHandler):
         if module not in ALLOWED_MODULES:
             self._json(400, {"error": f"module '{module}' not in allowed list"})
             return
-        if not config or ".." in config or config.startswith("/"):
+        if not _valid_config(config):
             self._json(400, {"error": "invalid config path"})
+            return
+
+        active = _active_train_sessions()
+        if active:
+            log.warning("launch rejected: session already running: %s", active[0])
+            self._json(409, {"error": "a training session is already running", "sessions": active})
             return
 
         session = f"train_{int(time.time())}"
@@ -120,10 +153,14 @@ class Handler(BaseHTTPRequestHandler):
         })
 
 
+class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
+    daemon_threads = True
+
+
 def main() -> None:
     log.info("Launcher API listening on 0.0.0.0:%d", PORT)
     log.info("REPO=%s  VENV=%s  MLFLOW=%s", REPO, VENV, MLFLOW_URI)
-    HTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
+    ThreadedHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
 
 
 if __name__ == "__main__":

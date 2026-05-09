@@ -49,7 +49,8 @@ def notify(
     }
 
     result_path = RESULTS_DIR / f"{run_name}.json"
-    result_path.write_text(json.dumps(payload, indent=2))
+    disk_payload = {k: v for k, v in payload.items() if k != "pipeline_secret"}
+    result_path.write_text(json.dumps(disk_payload, indent=2))
     print(f"[pipeline] results saved: {result_path}")
 
     url = webhook_url or os.environ.get("N8N_PIPELINE_WEBHOOK", "")
