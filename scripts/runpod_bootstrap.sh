@@ -19,7 +19,13 @@
 #   RUNPOD_API_KEY          required if TP_AUTO_SHUTDOWN=1, used to call the RunPod API
 #   RUNPOD_POD_ID           required if TP_AUTO_SHUTDOWN=1 (RunPod injects this automatically)
 
-set -euo pipefail
+set -uo pipefail   # NOT -e: we want the trap to fire on errors, not silent exit
+
+# Mirror everything to a persistent log on the network volume so we can
+# inspect AFTER a crash (the pod-level SSH only works when the container
+# is alive — but if the bootstrap fails we lose SSH access).
+mkdir -p /workspace 2>/dev/null || true
+exec > >(tee -a /workspace/bootstrap.log) 2>&1
 
 REPO_URL="${TP_REPO_URL:-https://github.com/fawraw/triple-pendulum-sim2real.git}"
 REPO_BRANCH="${TP_REPO_BRANCH:-main}"
@@ -27,6 +33,25 @@ REPO_DIR="${TP_REPO_DIR:-/workspace/triple-pendulum-sim2real}"
 MODULE="${TP_STAGE_MODULE:-}"
 CONFIG="${TP_STAGE_CONFIG:-}"
 AUTO_SHUTDOWN="${TP_AUTO_SHUTDOWN:-1}"
+
+# CRITICAL: keep the container alive on ANY exit (including errors) when
+# AUTO_SHUTDOWN=0, so the operator can SSH in and inspect bootstrap.log.
+# Without this, a `set -e` style failure would terminate the container and
+# make post-mortem impossible.
+keep_alive_on_exit() {
+    rc=$?
+    if [ "${AUTO_SHUTDOWN:-1}" != "1" ]; then
+        echo ""
+        echo "[bootstrap] === EXIT (rc=$rc) at $(date -u +%FT%TZ) ==="
+        echo "[bootstrap] AUTO_SHUTDOWN=0; keeping container alive for SSH."
+        echo "[bootstrap] tail -f /workspace/bootstrap.log to follow."
+        exec sleep infinity
+    fi
+}
+trap keep_alive_on_exit EXIT
+
+echo "[bootstrap] === START $(date -u +%FT%TZ) ==="
+echo "[bootstrap] AUTO_SHUTDOWN=$AUTO_SHUTDOWN  MODULE=$MODULE  CONFIG=$CONFIG"
 
 if [ -z "$MODULE" ] || [ -z "$CONFIG" ]; then
     echo "ERROR: TP_STAGE_MODULE and TP_STAGE_CONFIG must be set."
@@ -104,14 +129,9 @@ if [ "$AUTO_SHUTDOWN" = "1" ]; then
     exit $TRAIN_RC
 fi
 
-# AUTO_SHUTDOWN=0: keep the container alive so the operator can SSH in and
-# inspect /workspace/training.log. Without this, the container's CMD exits
-# when training finishes/crashes and `ssh` fails with "container is not
-# running", making post-mortem impossible.
+# AUTO_SHUTDOWN=0: the EXIT trap installed at the top will keep the container
+# alive via `exec sleep infinity`, so the operator can SSH in. We just fall
+# off the end of the script naturally.
 echo ""
 echo "[bootstrap] training exited with code $TRAIN_RC."
-echo "[bootstrap] AUTO_SHUTDOWN=0 — keeping container alive."
-echo "[bootstrap] SSH in and: tail /workspace/training.log"
-echo "[bootstrap] Manually stop the pod when done."
-echo ""
-exec sleep infinity
+echo "[bootstrap] AUTO_SHUTDOWN=0 — EXIT trap will keep container alive."
