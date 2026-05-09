@@ -1,0 +1,39 @@
+# Milestone 3b: extended run to push all 8 EPs past the 80% success threshold.
+# Same conditional TQC architecture as m3, training budget raised to 2M steps.
+# EP4/EP5/EP6/EP7 (links-up configs) need more exploration; buffer size raised
+# to match to avoid overwriting early transitions.
+
+env:
+  target_ep: 7              # ignored when target_mode == "random"
+  target_mode: random       # cycle target across all 8 EPs
+  max_episode_steps: 1000
+  init_mode: near_target
+  init_noise: 0.05
+
+algo: TQC
+total_timesteps: 2_000_000
+
+tqc:
+  policy: MlpPolicy
+  learning_rate: 3.0e-4
+  buffer_size: 1_000_000
+  batch_size: 256
+  tau: 0.005
+  gamma: 0.99
+  train_freq: 1
+  gradient_steps: 1
+  top_quantiles_to_drop_per_net: 2
+  policy_kwargs:
+    net_arch: [256, 256]
+    n_critics: 3
+    n_quantiles: 25
+
+callbacks:
+  rollout_log_freq: 10_000
+  checkpoint_freq:  200_000
+
+eval:
+  freq: 50_000
+  n_episodes: 32     # 4 per EP on average
+  deterministic: true
+  final_n_episodes: 80   # 10 per EP on average
