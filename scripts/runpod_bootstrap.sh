@@ -96,9 +96,13 @@ else
 fi
 git log --oneline -1
 
-# 2. Verify dependencies (the Dockerfile already installed them, but a stale
-# image may need a delta install).
-pip install -q -r requirements.txt
+# 2. Install Python deps. Use --ignore-installed to avoid PEP 668 / distutils
+# conflicts with system-provided packages (e.g. blinker installed via
+# apt-get's python3-blinker package — pip refuses to uninstall it, which
+# fails the whole resolution and leaves mlflow uninstalled).
+pip install --upgrade pip
+pip install --ignore-installed -r requirements.txt
+python -c "import mlflow, sb3_contrib, mujoco; print('deps OK: mlflow', mlflow.__version__, '| sb3_contrib', sb3_contrib.__version__, '| mujoco', mujoco.__version__)"
 
 # 3. Run training
 echo ""
