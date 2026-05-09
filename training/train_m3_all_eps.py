@@ -31,29 +31,15 @@ from stable_baselines3.common.callbacks import (
     CheckpointCallback,
     EvalCallback,
 )
-from stable_baselines3.common.monitor import Monitor
-from stable_baselines3.common.vec_env import DummyVecEnv
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from sim.envs.triple_pendulum_env import TriplePendulumEnv  # noqa: E402
+from training.env_utils import make_vec_env  # noqa: E402
 from training.mlflow_setup import init_mlflow  # noqa: E402
 from training.mlflow_safe import safe_artifact, safe_tag  # noqa: E402
 from training.pipeline_notifier import notify as pipeline_notify  # noqa: E402
-
-
-def make_env(env_cfg: dict):
-    def _thunk():
-        env = TriplePendulumEnv(
-            target_ep=int(env_cfg.get("target_ep", 7)),
-            target_mode=str(env_cfg.get("target_mode", "random")),
-            init_mode=str(env_cfg.get("init_mode", "near_target")),
-            init_noise=float(env_cfg.get("init_noise", 0.05)),
-            max_episode_steps=int(env_cfg["max_episode_steps"]),
-        )
-        return Monitor(env)
-    return _thunk
 
 
 class MLflowRolloutLogger(BaseCallback):
@@ -167,22 +153,28 @@ def main(cfg_path: str) -> None:
 
     env_cfg = cfg["env"]
     total_timesteps = int(cfg["total_timesteps"])
+    n_envs = int(cfg.get("n_envs", 1))
 
-    train_env = DummyVecEnv([make_env(env_cfg)])
-    eval_env = DummyVecEnv([make_env(env_cfg)])
+    train_env = make_vec_env(env_cfg, n_envs=n_envs)
+    eval_env = make_vec_env(env_cfg, n_envs=1)
 
     tqc_kwargs = dict(cfg["tqc"])
     policy = tqc_kwargs.pop("policy")
     policy_kwargs = tqc_kwargs.pop("policy_kwargs", {})
 
+    # device='auto' picks cuda when available, cpu otherwise. We surface
+    # the actual device via an MLflow tag so the run record is unambiguous.
+    device = tqc_kwargs.pop("device", "auto")
     model = TQC(
         policy,
         train_env,
         verbose=0,
         tensorboard_log=str(ROOT / "runs" / run_name),
         policy_kwargs=policy_kwargs,
+        device=device,
         **tqc_kwargs,
     )
+    actual_device = str(model.device)
 
     cb_cfg = cfg.get("callbacks", {})
     eval_cfg = cfg.get("eval", {})
@@ -209,6 +201,8 @@ def main(cfg_path: str) -> None:
         for k, v in env_cfg.items():
             mlflow.log_param(f"env.{k}", v)
         mlflow.log_param("total_timesteps", total_timesteps)
+        mlflow.log_param("n_envs", n_envs)
+        mlflow.log_param("device", actual_device)
         mlflow.log_param("git_commit", _git_commit())
 
         print(f"Run ID  : {run.info.run_id}")

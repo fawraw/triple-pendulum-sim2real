@@ -168,6 +168,25 @@ for metric in timesteps rollout_ep_rew_mean; do
 done
 ```
 
+## Cloud GPU (RunPod)
+
+Local CT 1018 is CPU-only. For M3c (4M steps, ~16h on CT) and M4 (5M steps,
+~24h on CT) move to a GPU pod — same cost as CT but 5-10× wall-clock.
+
+See [`runpod/README.md`](../runpod/README.md) for full setup.
+
+Quick path once template is configured:
+
+```bash
+runpodctl create pod \
+    --templateId "<id>" \
+    --gpuTypeId "NVIDIA_RTX_A5000" \
+    --env "TP_STAGE_MODULE=training.train_m4_transitions" \
+    --env "TP_STAGE_CONFIG=training/configs/m4_transitions_tqc.yaml"
+```
+
+The pod auto-shuts down on training completion (`TP_AUTO_SHUTDOWN=1` default).
+
 ## Known operational gaps (backlog)
 
 | Gap | Severity | Plan |
