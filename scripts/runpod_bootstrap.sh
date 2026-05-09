@@ -96,13 +96,23 @@ else
 fi
 git log --oneline -1
 
-# 2. Install Python deps. Use --ignore-installed to avoid PEP 668 / distutils
-# conflicts with system-provided packages (e.g. blinker installed via
-# apt-get's python3-blinker package — pip refuses to uninstall it, which
-# fails the whole resolution and leaves mlflow uninstalled).
+# 2. Install Python deps. Two complications on the runpod/pytorch image:
+#   a) blinker is installed via apt as python3-blinker; pip refuses to uninstall
+#      it. Use --ignore-installed to bypass the uninstall step.
+#   b) The image ships torch 2.4.x compiled against CUDA 12.4 to match the
+#      host's NVIDIA driver. Our requirements.txt has `torch>=2.2`, which lets
+#      pip pick up torch 2.11 (CUDA 13) — INCOMPATIBLE with the host driver,
+#      so torch.cuda.is_available() returns False at runtime. Skip torch in
+#      the bootstrap install: the image's pre-installed version is correct.
 pip install --upgrade pip
-pip install --ignore-installed -r requirements.txt
-python -c "import mlflow, sb3_contrib, mujoco; print('deps OK: mlflow', mlflow.__version__, '| sb3_contrib', sb3_contrib.__version__, '| mujoco', mujoco.__version__)"
+grep -vE '^\s*torch(\s|>|=|<|$)' requirements.txt > /tmp/requirements_no_torch.txt
+echo "[bootstrap] installing requirements (torch excluded — using image's pre-installed version)"
+pip install --ignore-installed -r /tmp/requirements_no_torch.txt
+python -c "
+import torch, mlflow, sb3_contrib, mujoco
+print(f'deps OK | torch {torch.__version__} (cuda={torch.cuda.is_available()}) | mlflow {mlflow.__version__} | sb3_contrib {sb3_contrib.__version__} | mujoco {mujoco.__version__}')
+assert torch.cuda.is_available(), 'CUDA not available — driver/torch mismatch'
+"
 
 # 3. Run training
 echo ""
