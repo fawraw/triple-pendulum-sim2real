@@ -110,7 +110,66 @@ class Handler(BaseHTTPRequestHandler):
         sessions = _active_train_sessions()
         self._json(200, {"sessions": sessions, "count": len(sessions)})
 
+    def _kill_active_session(self):
+        """Find any tmux session running training and kill it."""
+        # Find pids of training processes
+        result = subprocess.run(
+            ["pgrep", "-af", r"python.*-m\s+training\.train_m\w+\s+--config"],
+            capture_output=True, text=True, timeout=5,
+        )
+        pids = []
+        if result.returncode == 0:
+            for line in result.stdout.strip().splitlines():
+                if line:
+                    pids.append(line.split()[0])
+
+        # Kill any tmux session whose name matches train_*
+        tmux_result = subprocess.run(
+            ["tmux", "list-sessions"], capture_output=True, text=True, timeout=5,
+        )
+        killed_sessions = []
+        if tmux_result.returncode == 0:
+            for line in tmux_result.stdout.strip().splitlines():
+                # tmux output format: "session_name: 1 windows ..."
+                if ":" in line:
+                    name = line.split(":", 1)[0]
+                    if name.startswith("train_") or name in {"m3b", "m2", "m3c", "m4"}:
+                        subprocess.run(["tmux", "kill-session", "-t", name],
+                                       capture_output=True, timeout=5)
+                        killed_sessions.append(name)
+
+        # Hard-kill any leftover python training processes
+        killed_pids = []
+        for pid in pids:
+            try:
+                subprocess.run(["kill", "-TERM", pid], capture_output=True, timeout=2)
+                killed_pids.append(pid)
+            except Exception:
+                pass
+
+        return {"killed_sessions": killed_sessions, "killed_pids": killed_pids}
+
     def do_POST(self):
+        if self.path == "/kill":
+            try:
+                data = self._read_body()
+            except Exception:
+                self._json(400, {"error": "invalid JSON"})
+                return
+            incoming = data.get("secret", "")
+            if not hmac.compare_digest(incoming, SECRET):
+                log.warning("rejected kill: wrong secret from %s", self.address_string())
+                self._json(403, {"error": "forbidden"})
+                return
+            try:
+                result = self._kill_active_session()
+                log.info("kill result: %s", result)
+                self._json(200, {"ok": True, **result})
+            except Exception as exc:
+                log.error("kill failed: %s", exc)
+                self._json(500, {"error": str(exc)})
+            return
+
         if self.path != "/launch":
             self._json(404, {"error": "not found"})
             return
