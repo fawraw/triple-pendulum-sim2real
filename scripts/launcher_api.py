@@ -53,10 +53,15 @@ ALLOWED_MODULES = {
 
 
 def _active_train_sessions() -> list[str]:
-    result = subprocess.run(["tmux", "list-sessions"], capture_output=True, text=True)
+    """Detect any running training process, regardless of tmux session naming.
+    Looks for python processes running training.train_m* modules."""
+    result = subprocess.run(
+        ["pgrep", "-af", r"python.*-m training\.train_m"],
+        capture_output=True, text=True,
+    )
     if result.returncode != 0:
         return []
-    return [s for s in result.stdout.strip().splitlines() if "train_" in s]
+    return [line for line in result.stdout.strip().splitlines() if line]
 
 
 def _valid_config(config: str) -> bool:
