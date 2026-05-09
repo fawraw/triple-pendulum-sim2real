@@ -39,6 +39,7 @@ sys.path.insert(0, str(ROOT))
 
 from sim.envs.triple_pendulum_env import TriplePendulumEnv  # noqa: E402
 from training.mlflow_setup import init_mlflow  # noqa: E402
+from training.mlflow_safe import safe_artifact, safe_tag  # noqa: E402
 from training.pipeline_notifier import notify as pipeline_notify  # noqa: E402
 
 
@@ -240,15 +241,11 @@ def main(cfg_path: str) -> None:
                       f"{per_ep['overall_success_rate']:.3f}) — shipping best_model.")
                 per_ep = best_per_ep
                 save_path = best_path
-                mlflow.set_tag("shipped_checkpoint", "best_model")
+                safe_tag("shipped_checkpoint", "best_model")
             else:
-                mlflow.set_tag("shipped_checkpoint", "final")
+                safe_tag("shipped_checkpoint", "final")
 
-        try:
-            mlflow.log_artifact(str(save_path), artifact_path="model")
-        except Exception as exc:
-            mlflow.set_tag("artifact_path_local", str(save_path))
-            mlflow.set_tag("artifact_log_error", repr(exc)[:500])
+        safe_artifact(str(save_path), artifact_path="model")
 
         for k, v in per_ep.items():
             mlflow.log_metric(f"final_{k}", v)

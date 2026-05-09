@@ -12,7 +12,7 @@
 # Secrets are kept out of the unit file via EnvironmentFile. Create
 # /etc/triple-pendulum/launcher.env with:
 #   LAUNCHER_SECRET=...
-#   N8N_PIPELINE_WEBHOOK=https://n8n.faji.co/webhook/triple-pendulum-pipeline
+#   N8N_PIPELINE_WEBHOOK=http://10.1.4.226:5678/webhook/triple-pendulum-pipeline
 #   N8N_PIPELINE_SECRET=...
 #   MLFLOW_TRACKING_URI=http://10.1.4.230:5000
 # chmod 600 /etc/triple-pendulum/launcher.env
@@ -49,9 +49,14 @@ KillMode=process
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
-PrivateTmp=true
-# tmux + tee write to /tmp/train_*.log; allow that path explicitly.
-ReadWritePaths=/tmp /opt/triple-pendulum/repo
+# IMPORTANT: do NOT enable PrivateTmp=true. tmux uses /tmp/tmux-<uid>/default
+# as its socket. With PrivateTmp the launcher's tmux server is in a namespace-
+# private /tmp; on systemctl restart the new launcher gets a NEW namespace and
+# loses sight of running training sessions, AND log files in the old namespace
+# vanish.
+#
+# tmux + tee write to /var/log/tp-launcher/*.log (created by tmpfiles.d).
+ReadWritePaths=/tmp /opt/triple-pendulum/repo /var/log/tp-launcher
 
 [Install]
 WantedBy=multi-user.target

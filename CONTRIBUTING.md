@@ -50,7 +50,13 @@ GitHub Actions runs the same `pytest` command plus an end-to-end smoke (200-step
 
 ## Hard rules
 
-1. **Never commit secrets.** Check `git diff` for tokens, passwords, `.env` content. Pre-commit hook catches some, not all.
+1. **Never commit secrets.** Check `git diff` for tokens, passwords, `.env` content.
+   - The repo ships a pre-commit hook at [`.githooks/pre-commit`](.githooks/pre-commit) that scans staged diffs for known secret patterns. Activate it once after cloning:
+     ```bash
+     git config core.hooksPath .githooks
+     ```
+   - The hook chains to a global Lab-Perso-wide hook if you have one at `~/.git-hooks/pre-commit` (extra context-aware filtering).
+   - Bypass only when intentional: `git commit --no-verify`.
 2. **MLflow callbacks must be resilient.** Wrap `mlflow.log_metric` in try/except — a network blip should not kill an 8-hour training run.
 3. **Pipeline notifier secrets stay out of disk artifacts.** They go in the POST body only.
 4. **Launcher whitelist is enforced.** New training modules must be added to `ALLOWED_MODULES` in [`scripts/launcher_api.py`](scripts/launcher_api.py).

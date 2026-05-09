@@ -34,6 +34,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from sim.envs.triple_pendulum_env import TriplePendulumEnv  # noqa: E402
+from training.mlflow_safe import safe_artifact  # noqa: E402
 from training.mlflow_setup import init_mlflow  # noqa: E402
 
 
@@ -173,13 +174,9 @@ def main(cfg_path: str) -> None:
         model.save(str(save_path))
         # Best-effort artifact logging. If the MLflow server is configured
         # without --serve-artifacts, the local artifact root is on a
-        # different host and log_artifact will fail; we surface the path
-        # via a tag instead so the run is still useful.
-        try:
-            mlflow.log_artifact(str(save_path), artifact_path="model")
-        except Exception as exc:
-            mlflow.set_tag("artifact_path_local", str(save_path))
-            mlflow.set_tag("artifact_log_error", repr(exc)[:500])
+        # different host and log_artifact will fail; the helper surfaces the
+        # path via a tag instead so the run is still useful.
+        safe_artifact(str(save_path), artifact_path="model")
 
         rewards = []
         for _ in range(int(eval_cfg.get("final_n_episodes", 20))):

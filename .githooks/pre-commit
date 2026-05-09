@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Pre-commit hook for triple-pendulum-sim2real.
+#
+# Two-layer defense:
+#   1. Block credential-bearing file paths (always run, project-specific).
+#   2. Delegate secret-content scanning to the Lab Perso global hook if
+#      present (it has context-aware DOC_MARKERS filtering and avoids the
+#      circular problem where pattern definitions match themselves).
+#
+# Activate with:  git config core.hooksPath .githooks
+# Bypass:         git commit --no-verify
+
+set -euo pipefail
+
+# ---- 1. Reject credential-bearing paths ----
+staged=$(git diff --cached --name-only --diff-filter=AM)
+if [ -n "$staged" ]; then
+    banned_paths_re='(^\.env$|^\.env\.|/\.env$|^credentials/|\.pem$|\.p12$|id_rsa$|id_ed25519$)'
+    forbidden=$(echo "$staged" | grep -E "$banned_paths_re" || true)
+    if [ -n "$forbidden" ]; then
+        echo "ERROR pre-commit: refusing to commit credential-bearing files:"
+        echo "$forbidden" | sed 's/^/  /'
+        echo ""
+        echo "Move them outside the repo or .gitignore the path."
+        exit 1
+    fi
+fi
+
+# ---- 2. Delegate to global Lab Perso hook for content scanning ----
+GLOBAL_HOOK="$HOME/.git-hooks/pre-commit"
+if [ -x "$GLOBAL_HOOK" ] && [ "$GLOBAL_HOOK" != "$0" ]; then
+    "$GLOBAL_HOOK" "$@"
+    exit $?
+fi
+
+echo "pre-commit OK (project layer)"
+exit 0

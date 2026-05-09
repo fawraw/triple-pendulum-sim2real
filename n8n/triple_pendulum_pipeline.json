@@ -43,11 +43,11 @@
           "conditions": [
             {
               "id": "cond-launch",
-              "leftValue": "={{ $json.next.stage }}",
-              "rightValue": "HUMAN_REVIEW",
+              "leftValue": "={{ $json.hasNextStage }}",
+              "rightValue": true,
               "operator": {
-                "type": "string",
-                "operation": "notEquals"
+                "type": "boolean",
+                "operation": "equals"
               }
             }
           ],

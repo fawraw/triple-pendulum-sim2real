@@ -23,10 +23,16 @@ import logging
 import os
 import subprocess
 import sys
+import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from socketserver import ThreadingMixIn
+
+# Mutex protecting the active-session check + tmux spawn from TOCTOU races
+# (two near-simultaneous webhooks from n8n retry, etc.).
+_LAUNCH_LOCK = threading.Lock()
+LOG_DIR = Path(os.environ.get("TP_LAUNCHER_LOG_DIR", "/var/log/tp-launcher"))
 
 REPO = os.environ.get("TRIPLE_PENDULUM_REPO", "/opt/triple-pendulum/repo")
 VENV = os.environ.get("TRIPLE_PENDULUM_VENV", "/opt/triple-pendulum/.venv")
@@ -53,12 +59,18 @@ ALLOWED_MODULES = {
 
 
 def _active_train_sessions() -> list[str]:
-    """Detect any running training process, regardless of tmux session naming.
-    Looks for python processes running training.train_m* modules."""
-    result = subprocess.run(
-        ["pgrep", "-af", r"python.*-m training\.train_m"],
-        capture_output=True, text=True,
-    )
+    """Detect any running training process. Match python invocations of
+    training.train_m{module} with --config — tighter than 'train_m' so that
+    importing the module from a REPL or evaluating a checkpoint does not
+    register as 'training in progress'."""
+    try:
+        result = subprocess.run(
+            ["pgrep", "-af", r"python.*-m\s+training\.train_m\w+\s+--config"],
+            capture_output=True, text=True, timeout=5,
+        )
+    except subprocess.TimeoutExpired:
+        log.warning("pgrep timed out — assuming no active sessions")
+        return []
     if result.returncode != 0:
         return []
     return [line for line in result.stdout.strip().splitlines() if line]
@@ -131,30 +143,54 @@ class Handler(BaseHTTPRequestHandler):
             self._json(400, {"error": f"config file does not exist: {config}"})
             return
 
-        active = _active_train_sessions()
-        if active:
-            log.warning("launch rejected: session already running: %s", active[0])
-            self._json(409, {"error": "a training session is already running", "sessions": active})
-            return
+        # The lock + active check + tmux spawn must be atomic to prevent two
+        # concurrent webhook retries from racing past the active-check.
+        with _LAUNCH_LOCK:
+            active = _active_train_sessions()
+            if active:
+                log.warning("launch rejected: session already running: %s", active[0])
+                self._json(409, {"error": "a training session is already running", "sessions": active})
+                return
 
-        session = f"train_{int(time.time())}"
-        log_file = f"/tmp/{session}.log"
-        cmd = " && ".join([
-            f"cd {REPO}",
-            f"source {VENV}/bin/activate",
-            (
-                f"MUJOCO_GL=osmesa "
-                f"MLFLOW_TRACKING_URI={MLFLOW_URI} "
-                f"N8N_PIPELINE_WEBHOOK={N8N_WEBHOOK} "
-                f"N8N_PIPELINE_SECRET={N8N_SECRET} "
-                f"LAUNCHER_SECRET={SECRET} "
-                f"PYTHONUNBUFFERED=1 "
-                f"python -m {module} --config {config} "
-                f"2>&1 | tee {log_file}"
-            ),
-        ]) + f"; echo TERMINAL:FINISHED >> {log_file}"
+            session = f"train_{int(time.time())}"
+            try:
+                LOG_DIR.mkdir(parents=True, exist_ok=True)
+                log_file = str(LOG_DIR / f"{session}.log")
+            except OSError:
+                # Fallback: keep going with /tmp if the log dir cannot be created
+                # — better than refusing to launch a multi-day training.
+                log_file = f"/tmp/{session}.log"
+                log.warning("LOG_DIR unwritable, falling back to %s", log_file)
 
-        subprocess.Popen(["tmux", "new-session", "-d", "-s", session, cmd])
+            cmd = " && ".join([
+                f"cd {REPO}",
+                f"source {VENV}/bin/activate",
+                (
+                    f"MUJOCO_GL=osmesa "
+                    f"MLFLOW_TRACKING_URI={MLFLOW_URI} "
+                    f"N8N_PIPELINE_WEBHOOK={N8N_WEBHOOK} "
+                    f"N8N_PIPELINE_SECRET={N8N_SECRET} "
+                    f"LAUNCHER_SECRET={SECRET} "
+                    f"PYTHONUNBUFFERED=1 "
+                    f"python -m {module} --config {config} "
+                    f"2>&1 | tee {log_file}"
+                ),
+            ]) + f"; echo TERMINAL:FINISHED >> {log_file}"
+
+            subprocess.Popen(["tmux", "new-session", "-d", "-s", session, cmd])
+
+            # Verify tmux session was actually created. Without this, a missing
+            # tmux binary or a quoting bug means n8n gets 200 OK + nothing runs.
+            time.sleep(2)
+            check = subprocess.run(
+                ["tmux", "has-session", "-t", session],
+                capture_output=True, text=True, timeout=5,
+            )
+            if check.returncode != 0:
+                log.error("tmux has-session check failed for %s: %s", session, check.stderr)
+                self._json(500, {"error": "tmux session did not start", "session": session})
+                return
+
         log.info("launched session=%s module=%s config=%s", session, module, config)
         self._json(200, {
             "ok": True,
