@@ -75,7 +75,7 @@ for the gap analysis backing the project.
 | 0. Literature gap confirmed | ✅ | 2026-05-08 |
 | 1. MuJoCo model, 3 links on cart | ✅ | 2026-05-08 |
 | 2. Stable upright in sim (TQC) | 🟡 partial | 2026-05-08 |
-| 3. All 8 EPs stabilized in sim | ⬜ | |
+| 3. All 8 EPs stabilized in sim | 🟡 partial | 2026-05-09 |
 | 4. 56 transitions in sim | ⬜ | |
 | 5. Domain randomization, robustness | ⬜ | |
 | 6. Hardware v1 assembled | ⬜ | |
@@ -102,6 +102,34 @@ momentum.
 
 A 20-second video of this rollout is at
 [assets/eval_m2_upright.mp4](assets/eval_m2_upright.mp4).
+
+### M3 first results
+
+400K-step conditional TQC run (network 256 by 256, 3 critics, 25 quantiles, target
+resampled uniformly across all 8 EPs on every reset). Training wall time: 96 minutes
+on a single CPU core. Per-EP deterministic evaluation (10 rollouts each):
+
+| EP | Config | Reward mean | Ep length | Success rate |
+|:--:|:------:|------------:|----------:|:------------:|
+| 0 | DDD | -26.6 | 1000 | 100% |
+| 1 | DDU | -34.1 | 984 | 100% |
+| 2 | DUD | -132.8 | 778 | 50% |
+| 3 | DUU | -86.1 | 889 | 80% |
+| 4 | UDD | -140.4 | 247 | 0% |
+| 5 | UDU | -131.6 | 529 | 10% |
+| 6 | UUD | -127.6 | 229 | 0% |
+| 7 | UUU | -161.4 | 404 | 0% |
+| **Overall** | | **-105.1** | **632** | **42.5%** |
+
+The policy reliably stabilizes the two all-down configurations (EP0, EP1) and partially
+stabilizes EP2 and EP3. Configurations that require holding one or more links upright
+(EP4 to EP7) need more training steps or a curriculum. The next run extends to 2M steps.
+
+![M3 learning curve](assets/learning_curve_m3.png)
+
+| EP0 (DDD, 100% success) | EP7 (UUU, needs work) |
+|:---:|:---:|
+| ![EP0 eval](assets/eval_m3_ep0.png) | ![EP7 eval](assets/eval_m3_ep7.png) |
 
 ## Repository layout
 
