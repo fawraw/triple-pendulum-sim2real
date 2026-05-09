@@ -2,26 +2,22 @@
   "_comment": "Milestone pipeline definitions. n8n reads these criteria to decide what to do after each training run.",
   "M2": {
     "module": "training.train_m2_upright",
-    "pass_criteria": {
-      "ep7_success_rate": 0.80
-    },
+    "metric": "ep7_success_rate",
+    "threshold": 0.80,
     "pass": {
       "stage": "M3b",
       "config": "training/configs/m3b_all_eps_tqc.yaml",
       "module": "training.train_m3_all_eps"
     },
     "fail": {
-      "stage": "M2b",
-      "config": "training/configs/m2b_upright_tqc.yaml",
-      "module": "training.train_m2_upright",
-      "note": "M2b config not created yet — alert user"
+      "stage": "HUMAN_REVIEW",
+      "note": "M2 failed (ep7_success_rate < 0.80). Tune reward shaping or extend training budget."
     }
   },
   "M3": {
     "module": "training.train_m3_all_eps",
-    "pass_criteria": {
-      "overall_success_rate": 0.75
-    },
+    "metric": "overall_success_rate",
+    "threshold": 0.75,
     "pass": {
       "stage": "M3b",
       "config": "training/configs/m3b_all_eps_tqc.yaml",
@@ -35,12 +31,13 @@
   },
   "M3b": {
     "module": "training.train_m3_all_eps",
-    "pass_criteria": {
-      "overall_success_rate": 0.75
-    },
+    "metric": "overall_success_rate",
+    "threshold": 0.75,
     "pass": {
-      "stage": "HUMAN_REVIEW",
-      "note": "M3b passed. M4 (transitions) requires a new training script. Alert user to implement train_m4_transitions.py."
+      "stage": "M4",
+      "config": "training/configs/m4_transitions_tqc.yaml",
+      "module": "training.train_m4_transitions",
+      "note": "Set pretrained_policy in m4_transitions_tqc.yaml to the best M3b checkpoint before launching."
     },
     "fail": {
       "stage": "M3c",
@@ -50,16 +47,30 @@
   },
   "M3c": {
     "module": "training.train_m3_all_eps",
-    "pass_criteria": {
-      "overall_success_rate": 0.75
-    },
+    "metric": "overall_success_rate",
+    "threshold": 0.75,
     "pass": {
-      "stage": "HUMAN_REVIEW",
-      "note": "M3c passed. M4 (transitions) requires a new training script. Alert user."
+      "stage": "M4",
+      "config": "training/configs/m4_transitions_tqc.yaml",
+      "module": "training.train_m4_transitions",
+      "note": "Set pretrained_policy in m4_transitions_tqc.yaml to the best M3c checkpoint before launching."
     },
     "fail": {
       "stage": "HUMAN_REVIEW",
-      "note": "M3c failed. Manual review required before proceeding."
+      "note": "M3c failed (overall_success_rate < 0.75). Manual review required."
+    }
+  },
+  "M4": {
+    "module": "training.train_m4_transitions",
+    "metric": "overall_success_rate",
+    "threshold": 0.80,
+    "pass": {
+      "stage": "HUMAN_REVIEW",
+      "note": "M4 passed (>= 80% over 56 transitions). Proceed to M5 domain randomization — requires manual config."
+    },
+    "fail": {
+      "stage": "HUMAN_REVIEW",
+      "note": "M4 failed (overall_success_rate < 0.80). Extend budget or tune curriculum."
     }
   }
 }

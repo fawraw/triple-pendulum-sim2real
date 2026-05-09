@@ -1,0 +1,44 @@
+# Milestone 4: 56-transition policy (any EP → any EP).
+# Warm-starts from the best M3b/M3c checkpoint — set pretrained_policy below.
+# init_mode: "random" so the policy encounters arbitrary start configurations.
+# Observation is 24-dim: joint_state(8) + source_ep_onehot(8) + target_ep_onehot(8).
+# NOTE: set pretrained_policy to the path of the best M3b or M3c final.zip before launching.
+
+stage: M4
+
+pretrained_policy: null   # e.g. checkpoints/m3b_all_eps_<run>/final.zip
+
+env:
+  target_ep: 7              # ignored when target_mode == "random"
+  target_mode: random
+  init_mode: random
+  init_noise: 0.3
+  max_episode_steps: 2000   # longer budget for swing-up transitions
+
+algo: TQC
+total_timesteps: 5_000_000
+
+tqc:
+  policy: MlpPolicy
+  learning_rate: 1.0e-4
+  buffer_size: 2_000_000
+  batch_size: 512
+  tau: 0.005
+  gamma: 0.99
+  train_freq: 1
+  gradient_steps: 1
+  top_quantiles_to_drop_per_net: 2
+  policy_kwargs:
+    net_arch: [512, 512]
+    n_critics: 5
+    n_quantiles: 25
+
+callbacks:
+  rollout_log_freq: 10_000
+  checkpoint_freq:  500_000
+
+eval:
+  freq:            100_000
+  n_episodes:      56        # one episode per transition
+  deterministic:   true
+  final_n_episodes: 280      # 5 per transition × 56 = 280
