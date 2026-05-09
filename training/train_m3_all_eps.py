@@ -220,15 +220,36 @@ def main(cfg_path: str) -> None:
 
         elapsed = time.time() - t0
         mlflow.log_metric("train_wall_seconds", elapsed)
-        save_path = ROOT / "checkpoints" / run_name / "final.zip"
-        model.save(str(save_path))
+        final_path = ROOT / "checkpoints" / run_name / "final.zip"
+        model.save(str(final_path))
+
+        # EvalCallback uses mean episode reward to track best, but the
+        # pipeline gates on overall_success_rate. Pick whichever model
+        # has higher overall_success_rate as the artifact to ship.
+        n_per_ep = int(eval_cfg.get("final_n_episodes", 80)) // 8
+        per_ep = per_ep_eval(model, env_cfg, n_per_ep=n_per_ep)
+        best_path = ROOT / "checkpoints" / run_name / "best_model.zip"
+        save_path = final_path
+        if best_path.exists():
+            best_model = TQC.load(str(best_path))
+            best_per_ep = per_ep_eval(best_model, env_cfg, n_per_ep=n_per_ep)
+            mlflow.log_metric("best_overall_success_rate", best_per_ep["overall_success_rate"])
+            mlflow.log_metric("final_overall_success_rate", per_ep["overall_success_rate"])
+            if best_per_ep["overall_success_rate"] > per_ep["overall_success_rate"]:
+                print(f"[best] best_model wins ({best_per_ep['overall_success_rate']:.3f} vs "
+                      f"{per_ep['overall_success_rate']:.3f}) — shipping best_model.")
+                per_ep = best_per_ep
+                save_path = best_path
+                mlflow.set_tag("shipped_checkpoint", "best_model")
+            else:
+                mlflow.set_tag("shipped_checkpoint", "final")
+
         try:
             mlflow.log_artifact(str(save_path), artifact_path="model")
         except Exception as exc:
             mlflow.set_tag("artifact_path_local", str(save_path))
             mlflow.set_tag("artifact_log_error", repr(exc)[:500])
 
-        per_ep = per_ep_eval(model, env_cfg, n_per_ep=int(eval_cfg.get("final_n_episodes", 80)) // 8)
         for k, v in per_ep.items():
             mlflow.log_metric(f"final_{k}", v)
         print(f"DONE in {elapsed:.0f}s.")

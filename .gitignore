@@ -19,10 +19,12 @@ checkpoints/
 logs/
 runs/
 wandb/
-results/
 *.zip
 *.pt
 *.pth
+
+# results/ IS committed — pipeline-notifier writes a JSON snapshot per run
+# (without secrets) for permanent record. Kept under git intentionally.
 
 # Media (heavy)
 assets/raw/

@@ -104,3 +104,30 @@ def test_metrics_rounded_to_6_decimals(tmp_results, monkeypatch):
     saved = json.loads((tmp_results / "test_round.json").read_text())
     assert saved["metrics"]["x"] == 1.123457
     assert saved["metrics"]["y"] == 0.0
+
+
+def test_results_dir_fallback_when_unwritable(tmp_path, monkeypatch):
+    """If RESULTS_DIR is unwritable, the notifier should fall back to a
+    temp dir instead of crashing — protects 5M-step training runs from
+    losing their final result snapshot to a permission issue."""
+    unwritable = tmp_path / "ro_results"
+    unwritable.mkdir(mode=0o500)  # read+exec, no write
+    monkeypatch.setattr(pipeline_notifier, "RESULTS_DIR", unwritable)
+    monkeypatch.setenv("N8N_PIPELINE_SECRET", SECRET)
+    monkeypatch.delenv("N8N_PIPELINE_WEBHOOK", raising=False)
+
+    # Should NOT raise
+    pipeline_notifier.notify(
+        stage="M3b",
+        run_name="test_ro",
+        run_id="r",
+        metrics={"x": 1.0},
+        config="cfg.yaml",
+    )
+
+    # The snapshot should land in the tempdir fallback location
+    import tempfile
+    fallback = pipeline_notifier.Path(tempfile.gettempdir()) / "triple_pendulum_results"
+    assert (fallback / "test_ro.json").exists()
+    # Cleanup so the test is repeatable
+    (fallback / "test_ro.json").unlink()

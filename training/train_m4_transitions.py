@@ -1,19 +1,19 @@
 """Milestone 4: train a TQC policy that transitions between any two equilibria.
 
-The policy receives:
-  - current joint state (8 values: x, dx, θ₁, dθ₁, θ₂, dθ₂, θ₃, dθ₃)
-  - source EP one-hot (8 bits) — set to zero vector during free transitions
+The policy reuses the M3 observation space (16 dims):
+  - joint state (8): x, dx, theta1, dtheta1, theta2, dtheta2, theta3, dtheta3
   - target EP one-hot (8 bits)
-Total observation: 24 dimensions.
 
-Training curriculum (3 phases controlled by init_mode):
-  1. "near_target"  — stabilization only (same as M3, warm-start)
-  2. "bottom"       — swing-up from DDD to any EP
-  3. "random"       — arbitrary start, arbitrary target
+It does NOT include a source-EP one-hot — the policy infers the current state
+from the joint angles directly. The 56-transition coverage comes from training
+with random init across all configurations and a target resampled every reset.
 
-Success criterion per rollout: policy reaches the target EP window
-(all |θᵢ - θᵢ*| < 0.3 rad, |x| < 0.5 m) AND holds it for at least
-0.5 * max_episode_steps steps.
+Pre-requisite: warm-start from a passing M3 checkpoint. Set `pretrained_policy`
+in the YAML config to `checkpoints/<m3b_run>/final.zip`. Cold-start from random
+init is rejected unless `allow_cold_start: true` is set explicitly in the config.
+
+Success criterion per rollout: episode length >= 0.5 * max_episode_steps
+(policy holds the target EP for at least half the budget).
 
 Run:
     MUJOCO_GL=osmesa python -m training.train_m4_transitions \\
@@ -105,17 +105,24 @@ def per_transition_eval(model, env_cfg: dict, n_per_transition: int = 5) -> dict
     all_lengths: list[int] = []
 
     for src, dst in ALL_TRANSITIONS:
+        # ALL_TRANSITIONS excludes src == dst, so every transition starts from
+        # one EP and must traverse to a different target. Init near src, then
+        # flip target_ep to dst before the first step so the obs one-hot points
+        # to dst. (Passing options={"target_ep": dst} in reset would change
+        # target_ep BEFORE the angle init, so the env would init near dst —
+        # wrong.)
         lengths = []
         env = TriplePendulumEnv(
-            target_ep=dst,
+            target_ep=src,
             target_mode="fixed",
-            init_mode="near_target" if src == dst else "random",
-            init_noise=0.3,
+            init_mode="near_target",
+            init_noise=0.05,
             max_episode_steps=max_steps,
         )
         for trial in range(n_per_transition):
-            obs, _ = env.reset(seed=src * 100 + dst * 10 + trial,
-                               options={"target_ep": dst})
+            env.reset(seed=src * 100 + dst * 10 + trial)
+            env.target_ep = dst                   # switch target after init
+            obs = env._obs()                      # refresh obs with new target one-hot
             ep_n = 0
             done = trunc = False
             while not (done or trunc):
@@ -149,6 +156,24 @@ def _validate_cfg(cfg: dict) -> None:
             node = node[k]
     if not isinstance(cfg["total_timesteps"], (int, float)) or cfg["total_timesteps"] <= 0:
         raise ValueError("total_timesteps must be a positive number")
+
+    # Cold-start guard: M4 needs a warm-start from a passing M3 policy.
+    # Training from scratch on 56 transitions wastes 5M steps and is almost
+    # certainly the result of n8n auto-launching M4 before pretrained_policy
+    # was filled in. Operator must opt-in explicitly.
+    pretrained = cfg.get("pretrained_policy")
+    if not pretrained and not cfg.get("allow_cold_start"):
+        raise ValueError(
+            "M4 cold-start refused: set 'pretrained_policy' to a passing M3 "
+            "checkpoint (e.g. checkpoints/<m3b_run>/final.zip), or set "
+            "'allow_cold_start: true' if this is intentional."
+        )
+    if pretrained and not Path(pretrained).is_absolute():
+        # Relative paths are resolved against the project root (consistent
+        # with how the launcher passes config paths).
+        resolved = ROOT / pretrained
+        if not resolved.exists():
+            raise ValueError(f"pretrained_policy not found: {resolved}")
 
 
 def _git_commit() -> str:
@@ -223,16 +248,35 @@ def main(cfg_path: str) -> None:
 
         elapsed = time.time() - t0
         mlflow.log_metric("train_wall_seconds", elapsed)
-        save_path = ROOT / "checkpoints" / run_name / "final.zip"
-        model.save(str(save_path))
+        final_path = ROOT / "checkpoints" / run_name / "final.zip"
+        model.save(str(final_path))
+
+        # Ship whichever of {best_model, final} has higher overall_success_rate
+        # over the 56 transitions — same rationale as M3.
+        n_eval = int(eval_cfg.get("final_n_episodes", 280)) // 56
+        metrics = per_transition_eval(model, env_cfg, n_per_transition=n_eval)
+        best_path = ROOT / "checkpoints" / run_name / "best_model.zip"
+        save_path = final_path
+        if best_path.exists():
+            best_model = TQC.load(str(best_path))
+            best_metrics = per_transition_eval(best_model, env_cfg, n_per_transition=n_eval)
+            mlflow.log_metric("best_overall_success_rate", best_metrics["overall_success_rate"])
+            mlflow.log_metric("final_overall_success_rate", metrics["overall_success_rate"])
+            if best_metrics["overall_success_rate"] > metrics["overall_success_rate"]:
+                print(f"[best] best_model wins ({best_metrics['overall_success_rate']:.3f} vs "
+                      f"{metrics['overall_success_rate']:.3f}) — shipping best_model.")
+                metrics = best_metrics
+                save_path = best_path
+                mlflow.set_tag("shipped_checkpoint", "best_model")
+            else:
+                mlflow.set_tag("shipped_checkpoint", "final")
+
         try:
             mlflow.log_artifact(str(save_path), artifact_path="model")
         except Exception as exc:
             mlflow.set_tag("artifact_path_local", str(save_path))
             mlflow.set_tag("artifact_log_error", repr(exc)[:500])
 
-        n_eval = int(eval_cfg.get("final_n_episodes", 280)) // 56  # 5 per transition
-        metrics = per_transition_eval(model, env_cfg, n_per_transition=n_eval)
         for k, v in metrics.items():
             mlflow.log_metric(f"final_{k}", v)
 

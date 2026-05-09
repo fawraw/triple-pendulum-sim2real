@@ -19,6 +19,15 @@ def test_obs_shape_is_16(env):
     assert obs.dtype == np.float32
 
 
+def test_obs_shape_matches_observation_space(env):
+    """Catches the kind of bug where the env emits N dims but observation_space
+    is declared with M (M3/M4 docstrings vs implementation)."""
+    obs, _ = env.reset(seed=0)
+    assert obs.shape == env.observation_space.shape, (
+        f"obs shape {obs.shape} != observation_space.shape {env.observation_space.shape}"
+    )
+
+
 def test_action_space_is_1d_continuous(env):
     assert env.action_space.shape == (1,)
     assert env.action_space.low[0] == -1.0

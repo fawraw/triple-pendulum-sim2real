@@ -1,0 +1,51 @@
+# Triple Pendulum Pipeline Launcher API — systemd unit
+#
+# Install: copy to /etc/systemd/system/tp-launcher.service on the training host
+# (CT 1018), then:
+#   systemctl daemon-reload
+#   systemctl enable --now tp-launcher
+#
+# Logs: journalctl -u tp-launcher -f
+# Status: systemctl status tp-launcher
+# Restart: systemctl restart tp-launcher
+#
+# Secrets are kept out of the unit file via EnvironmentFile. Create
+# /etc/triple-pendulum/launcher.env with:
+#   LAUNCHER_SECRET=...
+#   N8N_PIPELINE_WEBHOOK=https://n8n.faji.co/webhook/triple-pendulum-pipeline
+#   N8N_PIPELINE_SECRET=...
+#   MLFLOW_TRACKING_URI=http://10.1.4.230:5000
+# chmod 600 /etc/triple-pendulum/launcher.env
+
+[Unit]
+Description=Triple Pendulum Pipeline Launcher API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/triple-pendulum/repo
+EnvironmentFile=/etc/triple-pendulum/launcher.env
+Environment=TRIPLE_PENDULUM_REPO=/opt/triple-pendulum/repo
+Environment=TRIPLE_PENDULUM_VENV=/opt/triple-pendulum/.venv
+Environment=LAUNCHER_PORT=8765
+ExecStart=/opt/triple-pendulum/.venv/bin/python scripts/launcher_api.py
+
+# Auto-restart but don't loop forever on persistent failures
+# (e.g. LAUNCHER_SECRET unset → service refuses to start; bail after 5 attempts).
+Restart=on-failure
+RestartSec=10
+StartLimitBurst=5
+StartLimitIntervalSec=300
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+# tmux + tee write to /tmp/train_*.log; allow that path explicitly.
+ReadWritePaths=/tmp /opt/triple-pendulum/repo
+
+[Install]
+WantedBy=multi-user.target

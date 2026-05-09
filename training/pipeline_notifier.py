@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 import time
 import urllib.request
 from pathlib import Path
@@ -29,6 +30,31 @@ ROOT = Path(__file__).resolve().parents[1]
 RESULTS_DIR = ROOT / "results"
 
 
+def _writable_results_dir() -> Path:
+    """Return a writable directory for result snapshots. Falls back to a
+    sub-folder under the system tempdir if RESULTS_DIR cannot be created
+    (read-only fs, permission denied) — better than crashing AFTER 5M steps
+    of compute."""
+    try:
+        RESULTS_DIR.mkdir(exist_ok=True)
+        # Smoke-test write permission (mkdir succeeds on existing read-only dir).
+        probe = RESULTS_DIR / ".write_probe"
+        probe.touch()
+        probe.unlink()
+        return RESULTS_DIR
+    except OSError as exc:
+        fallback = Path(tempfile.gettempdir()) / "triple_pendulum_results"
+        fallback.mkdir(exist_ok=True)
+        msg = f"results dir unavailable ({exc}); falling back to {fallback}"
+        print(f"[pipeline] WARN {msg}", flush=True)
+        if _mlflow is not None:
+            try:
+                _mlflow.set_tag("pipeline_results_dir_fallback", str(fallback))
+            except Exception:
+                pass
+        return fallback
+
+
 def notify(
     stage: str,
     run_name: str,
@@ -40,7 +66,7 @@ def notify(
     secret: str | None = None,
 ) -> None:
     """Write a JSON result snapshot and optionally trigger the n8n webhook."""
-    RESULTS_DIR.mkdir(exist_ok=True)
+    results_dir = _writable_results_dir()
 
     token = secret or os.environ.get("N8N_PIPELINE_SECRET", "")
     payload = {
@@ -53,7 +79,7 @@ def notify(
         "pipeline_secret": token,
     }
 
-    result_path = RESULTS_DIR / f"{run_name}.json"
+    result_path = results_dir / f"{run_name}.json"
     disk_payload = {k: v for k, v in payload.items() if k != "pipeline_secret"}
     result_path.write_text(json.dumps(disk_payload, indent=2))
     print(f"[pipeline] results saved: {result_path}")

@@ -123,6 +123,13 @@ class Handler(BaseHTTPRequestHandler):
         if not _valid_config(config):
             self._json(400, {"error": "invalid config path"})
             return
+        # Surface "config file missing" cleanly to n8n. Without this, the
+        # launch succeeds, the python process inside tmux raises FileNotFoundError
+        # and dies — but n8n never sees the failure and reports a successful
+        # launch.
+        if not (Path(REPO) / config).is_file():
+            self._json(400, {"error": f"config file does not exist: {config}"})
+            return
 
         active = _active_train_sessions()
         if active:

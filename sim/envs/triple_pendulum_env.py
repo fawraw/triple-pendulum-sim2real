@@ -113,12 +113,6 @@ class TriplePendulumEnv(gym.Env):
     # a fixed-point optimum.
     FALL_PENALTY = 100.0
 
-    def _angle_error(self) -> np.ndarray:
-        st = self._joint_state()
-        target = ep_target_angles(self.target_ep)
-        err = np.array([st[2], st[4], st[6]]) - target
-        return np.arctan2(np.sin(err), np.cos(err))
-
     def _is_fallen(self) -> bool:
         if abs(self.data.qpos[0]) > 0.95:
             return True

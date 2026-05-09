@@ -1,7 +1,7 @@
 # Triple Inverted Pendulum, Sim2Real RL
 
 [![CI](https://github.com/fawraw/triple-pendulum-sim2real/actions/workflows/ci.yml/badge.svg)](https://github.com/fawraw/triple-pendulum-sim2real/actions/workflows/ci.yml)
-[![License](https://img.shields.io/badge/license-MIT%20%2B%20CERN--OHL--W%20%2B%20CC--BY-blue)](#license)
+[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11-blue)](https://www.python.org/)
 [![MuJoCo](https://img.shields.io/badge/sim-MuJoCo%203.x-green)](https://mujoco.org/)
 [![Wiki](https://img.shields.io/badge/docs-wiki-blueviolet)](https://github.com/fawraw/triple-pendulum-sim2real/wiki)
@@ -175,6 +175,6 @@ assets/                Figures and demo media
 
 ## License
 
-- **Code:** [MIT](LICENSE)
-- **Hardware:** CERN-OHL-W v2 (planned, applies once hardware/ is published)
-- **Docs:** CC-BY 4.0
+- **Code, configs, scripts:** [MIT](LICENSE) — current scope of this repo.
+- **Hardware (BOM, CAD, firmware):** CERN-OHL-W v2 — will be added under `hardware/` and a `LICENSE-HARDWARE` file when M6 ships.
+- **Docs (`docs/`, wiki):** CC-BY 4.0 — will be added under `LICENSE-DOCS` when the paper is released.
