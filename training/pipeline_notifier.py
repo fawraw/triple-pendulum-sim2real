@@ -37,6 +37,7 @@ def notify(
     """Write a JSON result snapshot and optionally trigger the n8n webhook."""
     RESULTS_DIR.mkdir(exist_ok=True)
 
+    token = secret or os.environ.get("N8N_PIPELINE_SECRET", "")
     payload = {
         "milestone": stage,
         "run_name": run_name,
@@ -44,6 +45,7 @@ def notify(
         "config": str(config),
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "metrics": {k: round(float(v), 6) for k, v in metrics.items()},
+        "pipeline_secret": token,
     }
 
     result_path = RESULTS_DIR / f"{run_name}.json"
@@ -55,7 +57,6 @@ def notify(
         print("[pipeline] N8N_PIPELINE_WEBHOOK not set — skipping orchestrator call.")
         return
 
-    token = secret or os.environ.get("N8N_PIPELINE_SECRET", "")
     body = json.dumps(payload).encode()
     req = urllib.request.Request(
         url,
