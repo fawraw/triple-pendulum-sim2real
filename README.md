@@ -1,5 +1,11 @@
 # Triple Inverted Pendulum, Sim2Real RL
 
+[![CI](https://github.com/fawraw/triple-pendulum-sim2real/actions/workflows/ci.yml/badge.svg)](https://github.com/fawraw/triple-pendulum-sim2real/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-MIT%20%2B%20CERN--OHL--W%20%2B%20CC--BY-blue)](#license)
+[![Python](https://img.shields.io/badge/python-3.11-blue)](https://www.python.org/)
+[![MuJoCo](https://img.shields.io/badge/sim-MuJoCo%203.x-green)](https://mujoco.org/)
+[![Wiki](https://img.shields.io/badge/docs-wiki-blueviolet)](https://github.com/fawraw/triple-pendulum-sim2real/wiki)
+
 **Goal:** First demonstration of all 56 equilibrium transitions of a physical triple inverted pendulum on a cart, controlled by a sim-to-real reinforcement-learning policy, without precomputed trajectories or system-specific feedforward controllers.
 
 | Bottom equilibrium (DDD) | Top equilibrium (UUU) |
@@ -8,7 +14,7 @@
 
 ## Why this matters
 
-A triple inverted pendulum on a cart has 8 equilibrium configurations (each link Up or Down: 2³). Moving between any two of them, 8 × 7 = **56 transitions**, is the most general control benchmark that exists for this system.
+A triple inverted pendulum on a cart has 8 equilibrium configurations (each link Up or Down: 2³). Moving between any two of them — 8 × 7 = **56 transitions** — is the most general control benchmark for this system.
 
 | Author | System | Method | Sim2Real | Equilibria covered |
 |---|---|---|---|---|
@@ -31,42 +37,46 @@ source .venv/bin/activate
 # Sanity check the environment
 MUJOCO_GL=osmesa python -m sim.envs.triple_pendulum_env
 
+# Run unit tests
+pytest
+
 # Train milestone 2 (stabilize UUU). Logs to ./mlruns by default.
-MUJOCO_GL=osmesa python -m training.train_m2_upright
+MUJOCO_GL=osmesa python -m training.train_m2_upright \
+    --config training/configs/m2_upright_tqc.yaml
 
 # Render a deterministic rollout of a trained policy
-MUJOCO_GL=osmesa python scripts/eval_policy.py \
-    --checkpoint checkpoints/<run_name>/final.zip --out assets/eval.mp4
+MUJOCO_GL=osmesa python scripts/render_rollout.py \
+    --policy checkpoints/<run_name>/final.zip --ep 7 --out rollout.mp4
 ```
 
-The `setup_env.sh` script needs Python 3.10 or newer. On macOS install
-`python@3.11` first via Homebrew. To log experiments to a remote MLflow
-tracking server instead of the local `mlruns/` folder, export
-`MLFLOW_TRACKING_URI` before training.
+To log experiments to a remote MLflow server: `export MLFLOW_TRACKING_URI=...`.
 
-See [docs/roadmap.md](docs/roadmap.md) for the full milestone plan and
-[docs/literature/state_of_the_art.md](docs/literature/state_of_the_art.md)
-for the gap analysis backing the project.
+For training pipeline details, n8n orchestration, and configs, see the [project wiki](https://github.com/fawraw/triple-pendulum-sim2real/wiki).
 
-## Approach
+## Pipeline architecture
 
-1. **Modeling.** High-fidelity MuJoCo XML of the cart-pole-pole-pole system, parameterized by physical constants.
-2. **Single-EP stabilization.** Train TQC to stabilize each of the 8 equilibrium points in simulation.
-3. **Transition policy.** Train a single conditional policy that takes a target EP as input and reaches it from any starting state.
-4. **Domain randomization.** Friction, mass, latency, sensor noise, motor backlash randomized during training to bridge the reality gap.
-5. **Hardware build.** ~600 to 900 CHF open-source BOM, V-slot rail, brushless motor, AS5048A magnetic encoders, STM32 real-time loop.
-6. **Sim2Real transfer.** Deploy the policy on real hardware. Measure success rate per transition over N trials.
-7. **Publication.** arXiv preprint, conference submission (CoRL, ICRA, RSS, NeurIPS Sim2Real workshop), open-source release.
+The training stages run unattended on a dedicated host. n8n decides what to do after each stage finishes — advance to the next, retry, or escalate.
 
-## Tech stack
+```mermaid
+flowchart LR
+    A[Training script<br/>train_m{2,3,4}*.py] -->|writes results.json| B[pipeline_notifier.py]
+    B -->|POST webhook| C{n8n<br/>orchestrator}
+    C -->|metric ≥ threshold| D[Launcher API<br/>:8765/launch]
+    C -->|metric &lt; threshold| E[Launcher API<br/>fallback config]
+    C -->|HUMAN_REVIEW| F[Telegram alert]
+    D -->|tmux new-session| A
+    E -->|tmux new-session| A
+    A -.->|metrics| G[(MLflow<br/>10.1.4.230)]
+```
 
-- Simulation: **MuJoCo** + **Gymnasium**
-- RL: **Stable-Baselines3** with **TQC** (Truncated Quantile Critics)
-- Backend: **PyTorch**
-- Experiment tracking: **MLflow** (self-hosted)
-- Real-time comms: **ZeroMQ** between PC (policy) and STM32 (low-level loop)
-- Monitoring: **Grafana** + **InfluxDB**
-- Publication: **GitHub** + **arXiv** + **Zenodo**
+| Stage | Pass criterion | On pass | On fail |
+|---|---|---|---|
+| M2 | `ep7_success_rate ≥ 0.80` | M3b | HUMAN_REVIEW |
+| M3b | `overall_success_rate ≥ 0.75` | M4 | M3c |
+| M3c | `overall_success_rate ≥ 0.75` | M4 | HUMAN_REVIEW |
+| M4 | `overall_success_rate ≥ 0.80` (over 56 transitions) | HUMAN_REVIEW (M5) | HUMAN_REVIEW |
+
+See [n8n-Orchestration](https://github.com/fawraw/triple-pendulum-sim2real/wiki/n8n-Orchestration) and [Training-Pipeline](https://github.com/fawraw/triple-pendulum-sim2real/wiki/Training-Pipeline) for the full configuration.
 
 ## Status
 
@@ -74,87 +84,83 @@ for the gap analysis backing the project.
 |---|---|---|
 | 0. Literature gap confirmed | ✅ | 2026-05-08 |
 | 1. MuJoCo model, 3 links on cart | ✅ | 2026-05-08 |
-| 2. Stable upright in sim (TQC) | 🟡 partial | 2026-05-08 |
-| 3. All 8 EPs stabilized in sim | 🟡 partial | 2026-05-09 |
-| 4. 56 transitions in sim | ⬜ | |
-| 5. Domain randomization, robustness | ⬜ | |
+| 2. Stabilize UUU in sim (TQC) | 🟡 partial | 2026-05-08 |
+| 3. All 8 EPs stabilized in sim | 🟡 M3b training (2M steps) | 2026-05-09 |
+| 4. 56 transitions in sim | ⬜ scaffolded | |
+| 5. Domain randomization | ⬜ | |
 | 6. Hardware v1 assembled | ⬜ | |
 | 7. First Sim2Real swing-up | ⬜ | |
 | 8. All 56 transitions on hardware | ⬜ | |
 | 9. arXiv preprint | ⬜ | |
 | 10. Conference submission | ⬜ | |
 
-### M2 first results
+### Latest results
 
-200K-step TQC run (network 128 by 128, 3 critics, 20 quantiles, init noise 0.05 rad
-near UUU). Mean episode length over 20 deterministic eval rollouts: 824 steps
-out of 1000 (about 16 seconds at 50 Hz), with a maximum of 1000 steps reached on
-several seeds. The acceptance threshold for M2 is 1000 steps over 80% of
-rollouts; we are not there yet, but the pipeline is fully validated end to end.
+**M2 (UUU, 150K steps, [128,128]):** mean episode length 824/1000 over 20 deterministic eval rollouts, peak 1000. Acceptance threshold not yet met but pipeline validated end-to-end.
 
 ![learning curve](assets/learning_curve_m2.png)
 
-The eval rollout below shows the policy holding the upright configuration for
-the full 20-second episode, sliding the cart along the rail to absorb angular
-momentum.
+**M3 baseline (400K steps, [256,256], target resampled uniformly):**
 
-![eval final pose](assets/eval_m2_upright.png)
+| EP | Config | Success rate |
+|:--:|:------:|:------------:|
+| 0 | DDD | 100% |
+| 1 | DDU | 100% |
+| 2 | DUD | 50% |
+| 3 | DUU | 80% |
+| 4 | UDD | 0–10% |
+| 5 | UDU | 0–10% |
+| 6 | UUD | 0–10% |
+| 7 | UUU | 0–10% |
+| **Overall** | | **42.5%** |
 
-A 20-second video of this rollout is at
-[assets/eval_m2_upright.mp4](assets/eval_m2_upright.mp4).
+EP0/EP1 (gravity-assisted) trivial. EP4–EP7 (≥1 link upright) need more steps or a curriculum. **M3b (2M steps, [256,256], 1M buffer)** is currently training; results posted to the [Results](https://github.com/fawraw/triple-pendulum-sim2real/wiki/Results) wiki page on completion.
 
-### M3 first results
+## Tech stack
 
-400K-step conditional TQC run (network 256 by 256, 3 critics, 25 quantiles, target
-resampled uniformly across all 8 EPs on every reset). Training wall time: 96 minutes
-on a single CPU core. Per-EP deterministic evaluation (10 rollouts each):
-
-| EP | Config | Reward mean | Ep length | Success rate |
-|:--:|:------:|------------:|----------:|:------------:|
-| 0 | DDD | -26.6 | 1000 | 100% |
-| 1 | DDU | -34.1 | 984 | 100% |
-| 2 | DUD | -132.8 | 778 | 50% |
-| 3 | DUU | -86.1 | 889 | 80% |
-| 4 | UDD | -140.4 | 247 | 0% |
-| 5 | UDU | -131.6 | 529 | 10% |
-| 6 | UUD | -127.6 | 229 | 0% |
-| 7 | UUU | -161.4 | 404 | 0% |
-| **Overall** | | **-105.1** | **632** | **42.5%** |
-
-The policy reliably stabilizes the two all-down configurations (EP0, EP1) and partially
-stabilizes EP2 and EP3. Configurations that require holding one or more links upright
-(EP4 to EP7) need more training steps or a curriculum. The next run extends to 2M steps.
-
-![M3 learning curve](assets/learning_curve_m3.png)
-
-| EP0 (DDD, 100% success) | EP7 (UUU, needs work) |
-|:---:|:---:|
-| ![EP0 eval](assets/eval_m3_ep0.png) | ![EP7 eval](assets/eval_m3_ep7.png) |
+| Layer | Tool |
+|---|---|
+| Simulation | MuJoCo 3.x + Gymnasium |
+| RL algorithm | TQC (Truncated Quantile Critics) via sb3-contrib |
+| Backend | PyTorch (CPU sufficient for these network sizes) |
+| Experiment tracking | MLflow (self-hosted) |
+| Pipeline orchestration | n8n (self-hosted) |
+| Real-time control | ZeroMQ between policy PC and STM32 1 kHz loop |
+| Monitoring | Grafana + InfluxDB (planned) |
 
 ## Repository layout
 
 ```
 sim/
-  models/           MuJoCo XML files
-  envs/             Gymnasium environments
+  envs/                Gymnasium environments
+  models/              MuJoCo XML files
 training/
-  configs/          TQC hyperparameters per milestone
-  scripts/          Training launchers
+  configs/             TQC hyperparameters per milestone (m2, m3b, m3c, m4)
+  train_m{2,3,4}_*.py  Training entrypoints
+  pipeline_notifier.py POSTs to n8n + writes results JSON
+  pipeline_stages.json Stage transitions (read by n8n)
+scripts/
+  launcher_api.py      HTTP launcher for n8n to start training
+  render_rollout.py    Render saved policy to MP4
+  eval_policy.py       Per-EP evaluation
+  plot_learning_curve.py
+n8n/
+  triple_pendulum_pipeline.json   Workflow definition (importable)
 hardware/
-  cad/              Mechanical design files (FreeCAD, STEP)
-  firmware/         STM32 real-time controller
-  bom/              Bill of materials
-scripts/            Utilities (eval, video, profiling)
+  bom/                 Bill of materials (planned for M6)
 docs/
-  literature/       Annotated bibliography of related work
-assets/             Figures, videos, demo media
+  roadmap.md           Mirror of the wiki Roadmap (canonical: wiki)
+  literature/          Annotated bibliography
+tests/                 pytest unit tests (env, notifier, stages, launcher)
+assets/                Figures and demo media
 ```
 
 ## Reproducibility
 
-- Every training run is logged to MLflow with: code commit hash, seed, full config, learning curves, eval video.
+- Every training run is logged to MLflow with code commit hash, seed, full config, learning curves, and final eval metrics.
 - MuJoCo XML files are versioned alongside training scripts.
-- Hardware BOM, firmware, CAD, and assembly instructions will be released with the paper.
+- Pipeline state JSON files in `results/` are committed for permanent record (without secrets — see [`pipeline_notifier.py`](training/pipeline_notifier.py)).
+- Hardware BOM, firmware, CAD will be released with the paper.
 
 ## Citation (placeholder)
 
@@ -169,4 +175,6 @@ assets/             Figures, videos, demo media
 
 ## License
 
-MIT (code) + CERN-OHL-W v2 (hardware) + CC-BY 4.0 (docs).
+- **Code:** [MIT](LICENSE)
+- **Hardware:** CERN-OHL-W v2 (planned, applies once hardware/ is published)
+- **Docs:** CC-BY 4.0

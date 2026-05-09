@@ -1,119 +1,119 @@
 # Roadmap
 
-The project is organized into 10 milestones. Each milestone is a closed deliverable
-that can be evaluated quantitatively and committed as a release tag.
+> **Canonical version:** the [wiki Roadmap page](https://github.com/fawraw/triple-pendulum-sim2real/wiki/Roadmap) is the source of truth and is updated whenever a milestone advances. This file is kept in sync for offline / source-checkout readers; if they ever diverge, trust the wiki.
 
-## M0 — Literature gap audit
+Milestones are sequential: each is a prerequisite for the next. Acceptance criteria are quantitative to avoid subjective pass/fail.
 
-**Status:** complete (2026-05-08).
+## M0: Literature gap audit
 
-Confirmed that no published work covers the intersection of:
-1. Triple pendulum on a cart
-2. Reinforcement-learning policy (no precomputed trajectories)
-3. Sim-to-real transfer (training in simulation, deployment on physical hardware)
-4. All 56 transitions between the 8 equilibrium configurations
+**Goal:** Confirm the combination (triple pendulum + Sim2Real RL + all 56 transitions) is unclaimed.
 
-See [literature/state_of_the_art.md](literature/state_of_the_art.md) for the
-annotated bibliography backing this claim.
+**Done:** May 2026. Eight papers reviewed; no prior work covers the full intersection. See [`docs/literature/state_of_the_art.md`](literature/state_of_the_art.md).
 
-## M1 — MuJoCo model
+---
 
-**Status:** complete.
+## M1: MuJoCo simulation model
 
-Cart on a 2 m linear rail, three serial hinged poles (carbon-fiber-like
-parameters), absolute angle bookkeeping in the env, force actuator on the cart,
-joint position/velocity sensors. Visual cleanup with a tracking camera.
+**Goal:** A physically accurate cart-pole-pole-pole model that can be stepped headless.
 
-**Acceptance:** the simulation is stable under integration, and pole/cart
-trajectories are physically reasonable when actuated by random control inputs.
+**Acceptance:** `MUJOCO_GL=osmesa python -m sim.envs.triple_pendulum_env` runs without error and prints plausible observations.
 
-## M2 — Stabilize one equilibrium (UUU) in simulation
+**Done:** May 2026.
 
-**Status:** in progress.
+| Component | Value |
+|---|---|
+| Cart mass | 0.5 kg |
+| Rail length | 2.0 m (slide range: -0.95 to 0.95 m) |
+| Link 1 length / mass | 0.25 m / 0.10 kg |
+| Link 2 length / mass | 0.25 m / 0.08 kg |
+| Link 3 length / mass | 0.25 m / 0.05 kg |
+| Motor gear ratio | 15 |
+| Control range | -1 to 1 (normalized) |
+| Simulation timestep | 0.01 s (100 Hz internal, 50 Hz policy) |
 
-Train TQC starting from a state near UUU. Reward is a quadratic combination of
-absolute angle errors, link velocities, cart position, and a small control
-penalty. The policy must reject perturbations and settle the system back to UUU
-within a fixed time budget.
+---
 
-**Acceptance:**
-- Mean episode reward >= -200 over 20 deterministic eval rollouts (ep length 1000).
-- Tip standard deviation under 5 cm in the second half of an eval rollout.
+## M2: Stabilize EP7 (UUU) in simulation
 
-## M3 — Stabilize all 8 equilibria
+**Goal:** A TQC policy that keeps all three links pointing up for ≥ 80% of deterministic eval episodes.
 
-Train one conditional policy that stabilizes any of the 8 EPs given the target as
-a one-hot input. Curriculum: cycle through targets during training, with init
-near the target each time.
+**Acceptance:** Mean episode length ≥ 800 / 1000 over 20 deterministic rollouts, with ≥ 16/20 reaching 800+ steps.
 
-**Acceptance:** for each of the 8 EPs, the same policy maintains the system
-within a tight tolerance for >= 80% of eval rollouts.
+**Status:** Partial (May 2026). Best run: mean length 824/1000, peak 1000. Pipeline validated end-to-end.
 
-## M4 — Transition control (56 transitions) in simulation
+**Config:** `training/configs/m2_upright_tqc.yaml` — 150K steps, [128, 128], 3 critics, 20 quantiles.
 
-Single policy that, given a target one-hot, moves the system from any starting
-EP (or any state) to that target. Curriculum over (start EP, target EP) pairs;
-randomize starting state across the 8 wells. May require energy shaping in
-the reward to enable the swing-up motion.
+---
 
-**Acceptance:** success rate >= 70% over the full 56-transition matrix in
-simulation, success defined as "tip stays within tolerance of target for the
-last 200 steps of the episode".
+## M3: Conditional policy across all 8 EPs
 
-## M5 — Domain randomization & robustness
+**Goal:** A single TQC policy that reads a target EP one-hot from the observation and stabilizes any of the 8 equilibria.
 
-Randomize during training:
-- Mass and length of each link (+/- 10%)
-- Friction at each hinge and on the slider
-- Motor latency and saturation
-- Sensor noise on angles and velocities
-- Action delay (1 to 4 control steps)
+**Acceptance:** `overall_success_rate ≥ 0.75` over 80 rollouts (10 per EP).
 
-Validate on a held-out perturbation set; success rate should not drop more than
-~15 points relative to the deterministic-physics baseline.
+**Status:** Partial. M3 baseline (400K steps): EP0=100%, EP1=100%, EP2=50%, EP3=80%, EP4–EP7 = 0–10%. Overall: 42.5%.
 
-## M6 — Hardware build
+**Pipeline:** M3b (2M steps, [256,256]) → if `overall_success_rate < 0.75` → M3c (4M steps, [512,512]). Automated via n8n.
 
-V-slot 2040 rail, brushless motor with ODrive, 3 x AS5048A magnetic encoders
-(SPI), carbon-fiber rods, 608ZZ bearings, STM32 (or similar) running a
-real-time ~1 kHz loop, ZeroMQ link to the policy host. BOM, CAD, firmware,
-and assembly notes will be released with the paper.
+---
 
-**Acceptance:** the rig measures all 4 angles and the cart position cleanly,
-and a hand-tuned LQR can hold UUU briefly. This is the hardware's bring-up
-test, before any RL is involved.
+## M4: 56 transitions in simulation
 
-## M7 — Sim2Real transfer (single-EP stabilization)
+**Goal:** A policy that starts from any equilibrium (or random state) and reaches a commanded target EP.
 
-Deploy the M3 policy on the physical rig, holding each of the 8 EPs in turn.
-This is the first sim-to-real evaluation.
+**Scope:** 8 × 7 = 56 directed transitions. Each tested with 5 deterministic rollouts; success = policy reaches the target EP within `max_episode_steps` and holds it for ≥ 0.5 × `max_episode_steps`.
 
-**Acceptance:** for each of the 8 EPs, the policy maintains the equilibrium
-on hardware for >= 10 seconds in >= 80% of trials.
+**Acceptance:** ≥ 80% success rate aggregated over all 56 transitions.
 
-## M8 — Sim2Real transfer (56 transitions)
+**Notes:** Requires swing-up in addition to stabilization. Warm-start from the best M3b/M3c checkpoint via `pretrained_policy` in the M4 config.
 
-Deploy the M5 policy on the physical rig over the full 56-transition matrix.
-This is the headline result.
+---
 
-**Acceptance:** success rate >= 60% over the 56 transitions, measured as
-"tip in tolerance for the last 2 seconds of the trial".
+## M5: Domain randomization
 
-## M9 — Paper, video, kit
+**Goal:** Make the simulation-trained policy robust to physical parameter uncertainty.
 
-- arXiv preprint with the gap statement, method, ablations, and physical
-  results.
-- A short demo video (about 90 seconds) suitable for social media.
-- BOM, CAD, firmware, weights, training and eval scripts published as a
-  reproducible kit.
+**Randomized parameters:** link masses (±20%), link lengths (±5%), motor friction (0–0.1), control latency (0–20 ms), sensor noise (Gaussian, σ = 0.01 rad).
 
-## M10 — Conference submission
+**Acceptance:** Same success criteria as M4, maintained after adding all randomization ranges.
 
-Target venues: CoRL, ICRA, RSS, NeurIPS Sim2Real workshop. Submit the version
-that is closest to the next deadline, with the workshop track as a fast-path
-fallback.
+---
 
-## Tracking
+## M6: Hardware assembly
 
-Every milestone has its own MLflow experiment tag (`m2_upright`, `m3_all_eps`,
-etc.). Closed milestones are turned into git tags (`v0.2`, `v0.3`, ...).
+**Goal:** A working physical prototype matching the simulation model within 10% on all mechanical parameters.
+
+**Deliverables:**
+- V-slot 2040 rail, 1.0 m usable travel
+- ODrive-based brushless motor drive
+- 3 × AS5048A magnetic encoders (absolute, 14-bit)
+- STM32 real-time loop at 1 kHz, ZeroMQ bridge to policy PC at 50 Hz
+- Measured vs simulated step response comparison
+
+---
+
+## M7: First Sim2Real result
+
+**Goal:** At least one equilibrium transition demonstrated on hardware without any hardware-specific fine-tuning.
+
+**Acceptance:** EP7 (UUU) stabilization: hold for ≥ 10 s in ≥ 3/5 trials.
+
+---
+
+## M8: All 56 transitions on hardware
+
+**Goal:** All 56 transitions demonstrated on the physical system.
+
+**Acceptance:** ≥ 70% success rate over 5 trials per transition (350 trials total), logged with video evidence.
+
+---
+
+## M9: arXiv preprint
+
+**Scope:** Methods, results, BOM, code release. Target venues: CoRL, ICRA, RSS, or NeurIPS Sim2Real workshop.
+
+---
+
+## M10: Conference submission
+
+Submit the version that is closest to the next deadline, with the workshop track as a fast-path fallback.

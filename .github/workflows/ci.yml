@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 jobs:
-  smoke:
+  test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -28,6 +28,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install --index-url https://download.pytorch.org/whl/cpu "torch>=2.2"
           pip install -r requirements.txt
+
+      - name: Run unit tests
+        env:
+          MUJOCO_GL: osmesa
+        run: pytest
 
       - name: Env import + reset/step smoke
         env:
