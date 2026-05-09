@@ -34,11 +34,30 @@ Run training stages on a paid GPU pod instead of CT 1018 (CPU-only).
 |---|---|---|
 | `TP_STAGE_MODULE` | `training.train_m4_transitions` | which trainer to run |
 | `TP_STAGE_CONFIG` | `training/configs/m4_transitions_tqc.yaml` | config path |
-| `MLFLOW_TRACKING_URI` | `http://YOUR_VPN_IP:5000` | only reachable from Lab Perso VPN; OR ship results JSON only |
-| `N8N_PIPELINE_WEBHOOK` | `http://YOUR_PUBLIC_N8N_URL/webhook/...` | optional callback |
-| `N8N_PIPELINE_SECRET` | `<secret>` | required if `N8N_PIPELINE_WEBHOOK` is set |
-| `RUNPOD_API_KEY` | `<secret>` | needed for auto-shutdown |
-| `TP_AUTO_SHUTDOWN` | `1` | default; set to `0` to keep pod alive after run |
+| `RUNPOD_API_KEY` | `<secret>` | required for auto-shutdown + idle watchdog |
+
+### Recommended for cloud pods (notifications)
+
+The pod cannot reach the LAN-only n8n at `10.1.4.226:5678`, so the
+pipeline notifier's webhook will fail. Without a fallback, end-of-training
+is silent. Set:
+
+| Var | Notes |
+|---|---|
+| `TELEGRAM_FALLBACK_BOT_TOKEN` | bot token from @BotFather; pipeline_notifier POSTs a summary directly to Telegram when n8n is unreachable |
+| `TELEGRAM_FALLBACK_CHAT_ID` | chat id (`@username` or numeric) |
+
+### Optional env vars
+
+| Var | Default | Notes |
+|---|---|---|
+| `MLFLOW_TRACKING_URI` | `file:/workspace/mlruns` | network volume → survives pod death. Override with `http://...:5000` if you tunnel through Tailscale |
+| `N8N_PIPELINE_WEBHOOK` | unset | only useful if you expose n8n publicly |
+| `N8N_PIPELINE_SECRET` | unset | required if webhook is set |
+| `TP_AUTO_SHUTDOWN` | `1` | set to `0` to keep pod alive (debug); idle watchdog still applies |
+| `TP_IDLE_SHUTDOWN_MIN` | `30` | minutes of GPU<5% before forced podStop (cost guard) |
+| `TP_REPO_REF` | unset (uses branch HEAD) | commit SHA or tag to pin training to a specific code version |
+| `TP_REPO_BRANCH` | `main` | git branch to clone/reset to |
 
 `RUNPOD_POD_ID` is injected automatically by RunPod into the container env.
 

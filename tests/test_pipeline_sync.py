@@ -29,9 +29,11 @@ def _extract_n8n_stages_js() -> str:
         for n in workflow["nodes"]
         if n.get("type") == "n8n-nodes-base.code"
     )
-    m = re.search(r"const STAGES = (\{.*?\n\};)", code, re.DOTALL)
+    # Match `const STAGES = { ... };` allowing whitespace anywhere and
+    # arbitrary internal newlines/indent — survives n8n re-serialization.
+    m = re.search(r"const STAGES\s*=\s*(\{[\s\S]*?\n\s*\};)", code)
     assert m, "Could not locate STAGES literal in n8n Code node"
-    return m.group(1).rstrip(";").rstrip()
+    return m.group(1).rstrip().rstrip(";").rstrip()
 
 
 @pytest.fixture(scope="module")

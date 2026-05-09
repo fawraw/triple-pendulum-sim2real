@@ -10,14 +10,19 @@
 #
 # Optional env vars:
 #   TP_REPO_URL             default: https://github.com/fawraw/triple-pendulum-sim2real.git
-#   TP_REPO_BRANCH          default: main
+#   TP_REPO_BRANCH          default: main  (used if TP_REPO_REF unset)
+#   TP_REPO_REF             commit SHA / tag to pin to (overrides TP_REPO_BRANCH)
 #   TP_REPO_DIR             default: /workspace/triple-pendulum-sim2real
-#   MLFLOW_TRACKING_URI     default: http://10.1.4.230:5000  (only reachable inside Lab Perso VPN)
+#   MLFLOW_TRACKING_URI     default: file:/workspace/mlruns (network volume, persistent)
 #   N8N_PIPELINE_WEBHOOK    n8n callback URL (optional, set in RunPod template)
 #   N8N_PIPELINE_SECRET     shared secret for the webhook
+#   TELEGRAM_FALLBACK_BOT_TOKEN  fallback notification token (recommended for cloud)
+#   TELEGRAM_FALLBACK_CHAT_ID    chat id for fallback
 #   TP_AUTO_SHUTDOWN        default: 1 — set to 0 to keep the pod alive after training
-#   RUNPOD_API_KEY          required if TP_AUTO_SHUTDOWN=1, used to call the RunPod API
-#   RUNPOD_POD_ID           required if TP_AUTO_SHUTDOWN=1 (RunPod injects this automatically)
+#   TP_IDLE_SHUTDOWN_MIN    default: 30 — minutes of GPU<5% before forced shutdown
+#                                         (when AUTO_SHUTDOWN=0; safety against forgotten pods)
+#   RUNPOD_API_KEY          required for any auto-shutdown path
+#   RUNPOD_POD_ID           required (RunPod injects this automatically)
 
 set -uo pipefail   # NOT -e: we want the trap to fire on errors, not silent exit
 
@@ -29,10 +34,54 @@ exec > >(tee -a /workspace/bootstrap.log) 2>&1
 
 REPO_URL="${TP_REPO_URL:-https://github.com/fawraw/triple-pendulum-sim2real.git}"
 REPO_BRANCH="${TP_REPO_BRANCH:-main}"
+REPO_REF="${TP_REPO_REF:-}"
 REPO_DIR="${TP_REPO_DIR:-/workspace/triple-pendulum-sim2real}"
 MODULE="${TP_STAGE_MODULE:-}"
 CONFIG="${TP_STAGE_CONFIG:-}"
 AUTO_SHUTDOWN="${TP_AUTO_SHUTDOWN:-1}"
+IDLE_SHUTDOWN_MIN="${TP_IDLE_SHUTDOWN_MIN:-30}"
+
+# Defaults that the rest of the codebase expects to be set.
+# - MUJOCO_GL=osmesa: required for headless rendering on a fresh PyTorch image
+#   (without it, MuJoCo tries GLFW and crashes).
+# - MLFLOW_TRACKING_URI on the network volume so runs survive pod death.
+export MUJOCO_GL="${MUJOCO_GL:-osmesa}"
+export MLFLOW_TRACKING_URI="${MLFLOW_TRACKING_URI:-file:/workspace/mlruns}"
+
+# Idle-pod cost guard: when AUTO_SHUTDOWN=0 (interactive/debug mode), an
+# operator may forget the pod over a weekend at $0.30/hr. Spawn a watchdog
+# that triggers a podStop after IDLE_SHUTDOWN_MIN consecutive minutes of
+# GPU<5%. Disabled if RUNPOD_API_KEY is unset (no way to call the API).
+spawn_idle_watchdog() {
+    if [ "${AUTO_SHUTDOWN}" = "1" ] || [ -z "${RUNPOD_API_KEY:-}" ] || [ -z "${RUNPOD_POD_ID:-}" ]; then
+        return
+    fi
+    (
+        idle=0
+        check_every=60
+        threshold_seconds=$((IDLE_SHUTDOWN_MIN * 60))
+        while true; do
+            sleep "$check_every"
+            util=$(nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits 2>/dev/null | head -1)
+            util=${util:-0}
+            if [ "$util" -lt 5 ] 2>/dev/null; then
+                idle=$((idle + check_every))
+            else
+                idle=0
+            fi
+            if [ "$idle" -ge "$threshold_seconds" ]; then
+                echo "[idle-watchdog] GPU idle ${IDLE_SHUTDOWN_MIN}min — requesting podStop" >> /workspace/bootstrap.log
+                curl -s -X POST "https://api.runpod.io/graphql" \
+                    -H "Authorization: Bearer $RUNPOD_API_KEY" \
+                    -H "Content-Type: application/json" \
+                    -d "{\"query\":\"mutation { podStop(input: {podId: \\\"$RUNPOD_POD_ID\\\"}) { id } }\"}" \
+                    >> /workspace/bootstrap.log 2>&1
+                exit 0
+            fi
+        done
+    ) &
+    echo "[bootstrap] spawned idle watchdog (PID $!) — shutdown if GPU<5% for ${IDLE_SHUTDOWN_MIN}min"
+}
 
 # CRITICAL: keep the container alive on ANY exit (including errors) when
 # AUTO_SHUTDOWN=0, so the operator can SSH in and inspect bootstrap.log.
@@ -45,13 +94,19 @@ keep_alive_on_exit() {
         echo "[bootstrap] === EXIT (rc=$rc) at $(date -u +%FT%TZ) ==="
         echo "[bootstrap] AUTO_SHUTDOWN=0; keeping container alive for SSH."
         echo "[bootstrap] tail -f /workspace/bootstrap.log to follow."
-        exec sleep infinity
+        # Use sleep + wait (not exec sleep) so SIGTERM can flush logs cleanly.
+        # SIGTERM trap installed below.
+        sleep infinity &
+        wait $!
     fi
 }
 trap keep_alive_on_exit EXIT
+# Flush logs on SIGTERM (RunPod graceful shutdown sends SIGTERM).
+trap 'echo "[bootstrap] SIGTERM at $(date -u +%FT%TZ); flushing logs"; sync; exit 0' TERM INT
 
 echo "[bootstrap] === START $(date -u +%FT%TZ) ==="
 echo "[bootstrap] AUTO_SHUTDOWN=$AUTO_SHUTDOWN  MODULE=$MODULE  CONFIG=$CONFIG"
+echo "[bootstrap] MUJOCO_GL=$MUJOCO_GL  MLFLOW_TRACKING_URI=$MLFLOW_TRACKING_URI"
 
 if [ -z "$MODULE" ] || [ -z "$CONFIG" ]; then
     echo "ERROR: TP_STAGE_MODULE and TP_STAGE_CONFIG must be set."
@@ -61,7 +116,7 @@ if [ -z "$MODULE" ] || [ -z "$CONFIG" ]; then
 fi
 
 echo "=== Triple Pendulum bootstrap ==="
-echo "  repo:    $REPO_URL ($REPO_BRANCH)"
+echo "  repo:    $REPO_URL ($REPO_BRANCH${REPO_REF:+ @$REPO_REF})"
 echo "  module:  $MODULE"
 echo "  config:  $CONFIG"
 echo "  GPU:     $(python -c 'import torch; print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else "none")' 2>/dev/null || echo unknown)"
@@ -83,17 +138,37 @@ if [ "$need_apt" = "1" ]; then
         ca-certificates curl jq
 fi
 
-# 1. Clone or pull
+# 1. Wait for DNS to be ready, then clone or pull.
+# (Container DNS can take 5-30s after start; git was failing immediately on
+# fresh pods with "Could not resolve host: github.com".)
+echo "[bootstrap] waiting for DNS..."
+for i in $(seq 1 30); do
+    getent hosts github.com >/dev/null 2>&1 && break
+    [ $i -eq 30 ] && echo "[bootstrap] WARN DNS still not resolving github.com after 60s"
+    sleep 2
+done
+
 if [ -d "$REPO_DIR/.git" ]; then
-    echo "[bootstrap] pulling latest from $REPO_BRANCH"
     cd "$REPO_DIR"
-    git fetch origin "$REPO_BRANCH"
-    git reset --hard "origin/$REPO_BRANCH"
+    if [ -n "$REPO_REF" ]; then
+        echo "[bootstrap] fetching pinned ref: $REPO_REF"
+        git fetch --tags --depth 50 origin "$REPO_REF" 2>/dev/null || git fetch --depth 50 origin "$REPO_BRANCH"
+        git reset --hard "$REPO_REF"
+    else
+        echo "[bootstrap] pulling latest from $REPO_BRANCH"
+        git fetch --depth 50 origin "$REPO_BRANCH"
+        git reset --hard "origin/$REPO_BRANCH"
+    fi
 else
     echo "[bootstrap] cloning $REPO_URL"
     git clone --branch "$REPO_BRANCH" --depth 50 "$REPO_URL" "$REPO_DIR"
     cd "$REPO_DIR"
+    if [ -n "$REPO_REF" ]; then
+        git fetch --tags --depth 50 origin "$REPO_REF" 2>/dev/null || true
+        git reset --hard "$REPO_REF"
+    fi
 fi
+echo "[bootstrap] resolved commit: $(git rev-parse HEAD)"
 git log --oneline -1
 
 # 2. Install Python deps. Two complications on the runpod/pytorch image:
@@ -102,8 +177,7 @@ git log --oneline -1
 #      refuses to uninstall distutils-tracked packages, so the entire install
 #      aborts when mlflow → Flask → blinker pulls a blinker upgrade. Fix:
 #      pre-install blinker via pip (--ignore-installed --no-deps) so it
-#      becomes pip-managed; subsequent pip installs can then upgrade it
-#      cleanly.
+#      becomes pip-managed. Pin range to avoid future blinker 2.x breakage.
 #
 #   b) The image ships torch 2.4.x + CUDA 12.4 user-space, matched to the
 #      host driver (CUDA 12.7). Using `pip install --ignore-installed -r
@@ -113,8 +187,8 @@ git log --oneline -1
 #      with default upgrade-strategy=only-if-needed, so torch 2.4.1 already
 #      installed satisfies the >=2.2 constraint and is NOT touched.
 pip install --upgrade pip
-echo "[bootstrap] pre-installing blinker via pip to bypass apt distutils conflict"
-pip install --ignore-installed --no-deps blinker
+echo "[bootstrap] pre-installing blinker (>=1.6.2,<2) via pip to bypass apt distutils conflict"
+pip install --ignore-installed --no-deps "blinker>=1.6.2,<2"
 echo "[bootstrap] installing requirements.txt (default upgrade strategy keeps image's torch 2.4.1)"
 pip install -r requirements.txt
 python -c "
@@ -123,6 +197,9 @@ cuda_ok = torch.cuda.is_available()
 print(f'deps OK | torch {torch.__version__} (cuda={cuda_ok}) | mlflow {mlflow.__version__} | sb3_contrib {sb3_contrib.__version__} | mujoco {mujoco.__version__}')
 assert cuda_ok, f'CUDA not available — driver mismatch (torch {torch.__version__} expects newer driver?)'
 "
+
+# Spawn idle-pod watchdog now that everything is healthy.
+spawn_idle_watchdog
 
 # 3. Run training
 echo ""
@@ -154,8 +231,8 @@ if [ "$AUTO_SHUTDOWN" = "1" ]; then
 fi
 
 # AUTO_SHUTDOWN=0: the EXIT trap installed at the top will keep the container
-# alive via `exec sleep infinity`, so the operator can SSH in. We just fall
-# off the end of the script naturally.
+# alive via `sleep infinity & wait`. Idle watchdog will force-stop after
+# IDLE_SHUTDOWN_MIN if GPU stays idle, so cost is bounded.
 echo ""
 echo "[bootstrap] training exited with code $TRAIN_RC."
-echo "[bootstrap] AUTO_SHUTDOWN=0 — EXIT trap will keep container alive."
+echo "[bootstrap] AUTO_SHUTDOWN=0 — EXIT trap will keep container alive (idle watchdog will stop pod after ${IDLE_SHUTDOWN_MIN}min idle)."

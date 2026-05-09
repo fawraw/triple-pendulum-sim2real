@@ -27,7 +27,7 @@ tqc:
   tau: 0.005
   gamma: 0.99
   train_freq: 1
-  gradient_steps: 1
+  gradient_steps: 8           # = n_envs to preserve grad density
   top_quantiles_to_drop_per_net: 2
   policy_kwargs:
     net_arch: [512, 512]

@@ -24,7 +24,9 @@ tqc:
   tau: 0.005
   gamma: 0.99
   train_freq: 1
-  gradient_steps: 1
+  gradient_steps: 8           # = n_envs to preserve 1-grad-per-env-transition
+                              # ratio when n_envs > 1. With grad=1 and 8 envs,
+                              # we'd train 8x less than the baseline.
   top_quantiles_to_drop_per_net: 2
   policy_kwargs:
     net_arch: [256, 256]
