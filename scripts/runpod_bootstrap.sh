@@ -42,6 +42,22 @@ echo "  config:  $CONFIG"
 echo "  GPU:     $(python -c 'import torch; print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else "none")' 2>/dev/null || echo unknown)"
 echo ""
 
+# 0. Ensure OS deps are present (needed for headless MuJoCo + git clone).
+# Idempotent: skip apt-get if all packages already installed (custom Dockerfile case).
+need_apt=0
+for pkg in git tmux ffmpeg libgl1 libosmesa6 libglfw3 curl ca-certificates; do
+    dpkg -s "$pkg" >/dev/null 2>&1 || need_apt=1
+done
+if [ "$need_apt" = "1" ]; then
+    echo "[bootstrap] installing OS deps via apt-get (one-time, ~30s)"
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -qq
+    apt-get install -y -qq \
+        git tmux ffmpeg \
+        libgl1 libglu1-mesa libosmesa6 libegl1 libglfw3 \
+        ca-certificates curl jq
+fi
+
 # 1. Clone or pull
 if [ -d "$REPO_DIR/.git" ]; then
     echo "[bootstrap] pulling latest from $REPO_BRANCH"
