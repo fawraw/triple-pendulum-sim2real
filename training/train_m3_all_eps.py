@@ -39,6 +39,7 @@ sys.path.insert(0, str(ROOT))
 
 from sim.envs.triple_pendulum_env import TriplePendulumEnv  # noqa: E402
 from training.mlflow_setup import init_mlflow  # noqa: E402
+from training.pipeline_notifier import notify as pipeline_notify  # noqa: E402
 
 
 def make_env(env_cfg: dict):
@@ -207,6 +208,15 @@ def main(cfg_path: str) -> None:
         print(f"  overall rew={per_ep['overall_reward_mean']:+.1f}  "
               f"len={per_ep['overall_length_mean']:.1f}  "
               f"succ={per_ep['overall_success_rate']:.2f}")
+
+        stage = str(cfg.get("stage", "M3"))
+        pipeline_notify(
+            stage=stage,
+            run_name=run_name,
+            run_id=run.info.run_id,
+            metrics=per_ep,
+            config=cfg_path,
+        )
 
 
 if __name__ == "__main__":

@@ -1,0 +1,65 @@
+{
+  "_comment": "Milestone pipeline definitions. n8n reads these criteria to decide what to do after each training run.",
+  "M2": {
+    "module": "training.train_m2_upright",
+    "pass_criteria": {
+      "ep7_success_rate": 0.80
+    },
+    "pass": {
+      "stage": "M3b",
+      "config": "training/configs/m3b_all_eps_tqc.yaml",
+      "module": "training.train_m3_all_eps"
+    },
+    "fail": {
+      "stage": "M2b",
+      "config": "training/configs/m2b_upright_tqc.yaml",
+      "module": "training.train_m2_upright",
+      "note": "M2b config not created yet — alert user"
+    }
+  },
+  "M3": {
+    "module": "training.train_m3_all_eps",
+    "pass_criteria": {
+      "overall_success_rate": 0.75
+    },
+    "pass": {
+      "stage": "M3b",
+      "config": "training/configs/m3b_all_eps_tqc.yaml",
+      "module": "training.train_m3_all_eps"
+    },
+    "fail": {
+      "stage": "M3b",
+      "config": "training/configs/m3b_all_eps_tqc.yaml",
+      "module": "training.train_m3_all_eps"
+    }
+  },
+  "M3b": {
+    "module": "training.train_m3_all_eps",
+    "pass_criteria": {
+      "overall_success_rate": 0.75
+    },
+    "pass": {
+      "stage": "HUMAN_REVIEW",
+      "note": "M3b passed. M4 (transitions) requires a new training script. Alert user to implement train_m4_transitions.py."
+    },
+    "fail": {
+      "stage": "M3c",
+      "config": "training/configs/m3c_all_eps_tqc.yaml",
+      "module": "training.train_m3_all_eps"
+    }
+  },
+  "M3c": {
+    "module": "training.train_m3_all_eps",
+    "pass_criteria": {
+      "overall_success_rate": 0.75
+    },
+    "pass": {
+      "stage": "HUMAN_REVIEW",
+      "note": "M3c passed. M4 (transitions) requires a new training script. Alert user."
+    },
+    "fail": {
+      "stage": "HUMAN_REVIEW",
+      "note": "M3c failed. Manual review required before proceeding."
+    }
+  }
+}

@@ -1,0 +1,145 @@
+{
+  "name": "Triple Pendulum Pipeline Orchestrator",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "triple-pendulum-pipeline",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "a1b2c3d4-0001-0001-0001-000000000001",
+      "name": "Training Complete",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "language": "javaScript",
+        "jsCode": "// ---- CONFIG (update if infra changes) ----\nconst PIPELINE_SECRET   = 'YOUR_PIPELINE_SECRET';     // must match N8N_PIPELINE_SECRET in training scripts\nconst LAUNCHER_SECRET   = 'YOUR_LAUNCHER_SECRET'; // must match LAUNCHER_SECRET on CT 1018\nconst LAUNCHER_URL      = 'http://10.1.4.232:8765/launch';\nconst TELEGRAM_CHAT_ID  = 'REPLACE_WITH_YOUR_CHAT_ID'; // your Telegram chat ID\n\n// ---- STAGE DEFINITIONS ----\nconst STAGES = {\n  M2: {\n    pass_criteria: { ep7_success_rate: 0.80 },\n    pass: { stage: 'M3b', config: 'training/configs/m3b_all_eps_tqc.yaml', module: 'training.train_m3_all_eps' },\n    fail: { stage: 'HUMAN_REVIEW', note: 'M2 failed — manual intervention required' }\n  },\n  M3: {\n    pass_criteria: { overall_success_rate: 0.75 },\n    pass: { stage: 'M3b', config: 'training/configs/m3b_all_eps_tqc.yaml', module: 'training.train_m3_all_eps' },\n    fail: { stage: 'M3b', config: 'training/configs/m3b_all_eps_tqc.yaml', module: 'training.train_m3_all_eps' }\n  },\n  M3b: {\n    pass_criteria: { overall_success_rate: 0.75 },\n    pass: { stage: 'HUMAN_REVIEW', note: 'M3b passed ✅ — implement train_m4_transitions.py and confirm before launching M4' },\n    fail: { stage: 'M3c', config: 'training/configs/m3c_all_eps_tqc.yaml', module: 'training.train_m3_all_eps' }\n  },\n  M3c: {\n    pass_criteria: { overall_success_rate: 0.75 },\n    pass: { stage: 'HUMAN_REVIEW', note: 'M3c passed ✅ — ready for M4 implementation' },\n    fail: { stage: 'HUMAN_REVIEW', note: 'M3c failed ❌ — hyperparameter tuning needed' }\n  }\n};\n\n// ---- VALIDATE SECRET ----\nconst incomingSecret = $input.first().headers['x-pipeline-secret'] || '';\nif (incomingSecret !== PIPELINE_SECRET) {\n  throw new Error('Invalid pipeline secret — request rejected');\n}\n\n// ---- PARSE INCOMING DATA ----\nconst data = $input.first().json;\nconst milestone = data.milestone || 'UNKNOWN';\nconst metrics   = data.metrics   || {};\nconst runName   = data.run_name  || 'unknown';\nconst runId     = data.run_id    || 'unknown';\n\n// ---- EVALUATE CRITERIA ----\nconst stageDef = STAGES[milestone];\nlet passed  = false;\nlet next    = { stage: 'HUMAN_REVIEW', note: 'Stage not defined in pipeline_stages' };\nlet reasons = [];\n\nif (stageDef) {\n  const criteria = stageDef.pass_criteria;\n  const checks = Object.entries(criteria).map(([k, threshold]) => {\n    const actual = typeof metrics[k] === 'number' ? metrics[k] : 0;\n    const ok = actual >= threshold;\n    reasons.push(`${k}: ${(actual*100).toFixed(0)}% (need ${(threshold*100).toFixed(0)}%) ${ok ? '✅' : '❌'}`);\n    return ok;\n  });\n  passed = checks.every(Boolean);\n  next   = passed ? stageDef.pass : stageDef.fail;\n}\n\n// ---- BUILD LAUNCH PAYLOAD (only if next stage is a real training run) ----\nconst canLaunch = next.stage && next.stage !== 'HUMAN_REVIEW' && next.module && next.config;\nconst launchPayload = canLaunch ? {\n  secret: LAUNCHER_SECRET,\n  module: next.module,\n  config: next.config\n} : null;\n\n// ---- FORMAT TELEGRAM MESSAGE ----\nconst statusIcon = passed ? '✅' : '⚠️';\nconst epTable = [0,1,2,3,4,5,6,7].map(i => {\n  const sr  = metrics[`ep${i}_success_rate`];\n  const bar = typeof sr === 'number' ? (sr >= 0.8 ? '🟢' : sr >= 0.5 ? '🟡' : '🔴') : '⬜';\n  return `EP${i}: ${bar} ${typeof sr === 'number' ? (sr*100).toFixed(0)+'%' : 'n/a'}`;\n}).join('  ');\n\nconst lines = [\n  `*Triple Pendulum — ${milestone} ${statusIcon}*`,\n  `Run: \\`${runName}\\``,\n  '',\n  '*Per-EP success rates:*',\n  epTable,\n  '',\n  '*Criteria:*',\n  ...reasons,\n  '',\n  canLaunch\n    ? `*Next: launching ${next.stage}*\\n\\`${next.config}\\``\n    : `*Next: ${next.stage}*\\n${next.note || ''}`,\n];\nconst message = lines.join('\\n');\n\nreturn [{ json: {\n  milestone, runName, runId, passed, next, launchPayload, message,\n  telegramChatId: TELEGRAM_CHAT_ID,\n  launcherUrl: LAUNCHER_URL,\n  metrics,\n} }];\n"
+      },
+      "id": "a1b2c3d4-0002-0002-0002-000000000002",
+      "name": "Evaluate & Route",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-launch",
+              "leftValue": "={{ $json.launchPayload !== null && $json.launchPayload !== undefined }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a1b2c3d4-0003-0003-0003-000000000003",
+      "name": "Has Next Stage?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Evaluate & Route').first().json.launcherUrl }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($('Evaluate & Route').first().json.launchPayload) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "a1b2c3d4-0004-0004-0004-000000000004",
+      "name": "Launch Next Training",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [900, 180]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Evaluate & Route').first().json.telegramChatId }}",
+        "text": "={{ $('Evaluate & Route').first().json.message }}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "a1b2c3d4-0005-0005-0005-000000000005",
+      "name": "Telegram Notify",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [1100, 300],
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_WITH_N8N_TELEGRAM_CREDENTIAL_ID",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\"ok\": true, \"milestone\": \"{{ $('Evaluate & Route').first().json.milestone }}\", \"passed\": {{ $('Evaluate & Route').first().json.passed }}}"
+      },
+      "id": "a1b2c3d4-0006-0006-0006-000000000006",
+      "name": "Respond 200",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1300, 300]
+    }
+  ],
+  "connections": {
+    "Training Complete": {
+      "main": [
+        [{ "node": "Evaluate & Route", "type": "main", "index": 0 }]
+      ]
+    },
+    "Evaluate & Route": {
+      "main": [
+        [{ "node": "Has Next Stage?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Has Next Stage?": {
+      "main": [
+        [{ "node": "Launch Next Training", "type": "main", "index": 0 }],
+        [{ "node": "Telegram Notify", "type": "main", "index": 0 }]
+      ]
+    },
+    "Launch Next Training": {
+      "main": [
+        [{ "node": "Telegram Notify", "type": "main", "index": 0 }]
+      ]
+    },
+    "Telegram Notify": {
+      "main": [
+        [{ "node": "Respond 200", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": ["triple-pendulum", "ml-pipeline"]
+}

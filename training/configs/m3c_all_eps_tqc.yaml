@@ -1,0 +1,40 @@
+# Milestone 3c: fallback if M3b (2M steps) does not reach 75% overall success.
+# Longer training (4M steps), larger network [512,512], larger buffer.
+# Launched automatically by n8n if M3b fails its acceptance criteria.
+
+stage: M3c
+
+env:
+  target_ep: 7
+  target_mode: random
+  max_episode_steps: 1000
+  init_mode: near_target
+  init_noise: 0.05
+
+algo: TQC
+total_timesteps: 4_000_000
+
+tqc:
+  policy: MlpPolicy
+  learning_rate: 2.0e-4
+  buffer_size: 2_000_000
+  batch_size: 256
+  tau: 0.005
+  gamma: 0.99
+  train_freq: 1
+  gradient_steps: 1
+  top_quantiles_to_drop_per_net: 2
+  policy_kwargs:
+    net_arch: [512, 512]
+    n_critics: 3
+    n_quantiles: 25
+
+callbacks:
+  rollout_log_freq: 20_000
+  checkpoint_freq: 500_000
+
+eval:
+  freq: 100_000
+  n_episodes: 32
+  deterministic: true
+  final_n_episodes: 80
