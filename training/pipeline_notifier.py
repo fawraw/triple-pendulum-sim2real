@@ -20,6 +20,11 @@ import time
 import urllib.request
 from pathlib import Path
 
+try:
+    import mlflow as _mlflow
+except ImportError:
+    _mlflow = None
+
 ROOT = Path(__file__).resolve().parents[1]
 RESULTS_DIR = ROOT / "results"
 
@@ -72,4 +77,10 @@ def notify(
         with urllib.request.urlopen(req, timeout=15) as resp:
             print(f"[pipeline] n8n webhook: HTTP {resp.status}")
     except Exception as exc:
-        print(f"[pipeline] n8n webhook failed (non-fatal): {exc}")
+        msg = str(exc)
+        print(f"[pipeline] n8n webhook failed (non-fatal): {msg}")
+        if _mlflow is not None:
+            try:
+                _mlflow.set_tag("pipeline_notify_error", msg[:500])
+            except Exception:
+                pass

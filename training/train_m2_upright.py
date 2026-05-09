@@ -13,7 +13,7 @@ tracking server, export MLFLOW_TRACKING_URI before launching.
 from __future__ import annotations
 
 import argparse
-import os
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -79,9 +79,36 @@ class MLflowRolloutLogger(BaseCallback):
         return True
 
 
+_M2_REQUIRED = {
+    ("env", "target_ep"), ("env", "max_episode_steps"),
+    ("tqc", "policy"), ("total_timesteps",),
+}
+
+
+def _validate_cfg_m2(cfg: dict) -> None:
+    for keys in _M2_REQUIRED:
+        node = cfg
+        for k in keys:
+            if not isinstance(node, dict) or k not in node:
+                raise ValueError(f"Config missing required key: {'.'.join(keys)}")
+            node = node[k]
+    if not isinstance(cfg["total_timesteps"], (int, float)) or cfg["total_timesteps"] <= 0:
+        raise ValueError("total_timesteps must be a positive number")
+    if not isinstance(cfg["env"]["max_episode_steps"], int) or cfg["env"]["max_episode_steps"] <= 0:
+        raise ValueError("env.max_episode_steps must be a positive integer")
+
+
+def _git_commit() -> str:
+    r = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True,
+                       cwd=ROOT, check=False)
+    return r.stdout.strip() or "unknown"
+
+
 def main(cfg_path: str) -> None:
     with open(cfg_path) as f:
         cfg = yaml.safe_load(f)
+
+    _validate_cfg_m2(cfg)
 
     init_mlflow()
     run_name = f"m2_upright_{time.strftime('%Y%m%d_%H%M%S')}"
@@ -130,8 +157,7 @@ def main(cfg_path: str) -> None:
         for k, v in env_cfg.items():
             mlflow.log_param(f"env.{k}", v)
         mlflow.log_param("total_timesteps", total_timesteps)
-        mlflow.log_param("git_commit",
-                         os.popen("git rev-parse HEAD").read().strip() or "unknown")
+        mlflow.log_param("git_commit", _git_commit())
 
         print(f"Run ID  : {run.info.run_id}")
         print(f"Run URL : {mlflow.get_tracking_uri()}/#/experiments/"
