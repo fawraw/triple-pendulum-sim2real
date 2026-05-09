@@ -39,6 +39,12 @@ RestartSec=10
 StartLimitBurst=5
 StartLimitIntervalSec=300
 
+# CRITICAL: KillMode=process (not the default control-group) so that
+# detached tmux training sessions started via subprocess.Popen are NOT
+# killed when the launcher itself is restarted. Without this, a routine
+# `systemctl restart tp-launcher` aborts a multi-day training run.
+KillMode=process
+
 # Hardening
 NoNewPrivileges=true
 ProtectSystem=strict
