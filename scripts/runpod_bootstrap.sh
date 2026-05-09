@@ -86,8 +86,8 @@ set -e
 echo ""
 echo "=== Training exit code: $TRAIN_RC ==="
 
-# 4. Auto-shutdown the pod (RunPod API).
-# We do this even on failure so a crashed run doesn't burn $/hour idle.
+# 4. Auto-shutdown the pod (RunPod API), or stay alive for SSH inspection.
+# We auto-shutdown even on failure so a crashed run doesn't burn $/hour idle.
 if [ "$AUTO_SHUTDOWN" = "1" ]; then
     if [ -n "${RUNPOD_API_KEY:-}" ] && [ -n "${RUNPOD_POD_ID:-}" ]; then
         echo "[bootstrap] requesting pod shutdown via RunPod API"
@@ -101,6 +101,17 @@ if [ "$AUTO_SHUTDOWN" = "1" ]; then
         echo "[bootstrap] AUTO_SHUTDOWN=1 but RUNPOD_API_KEY/RUNPOD_POD_ID missing; staying alive."
         echo "[bootstrap] Stop manually: https://www.runpod.io/console/pods"
     fi
+    exit $TRAIN_RC
 fi
 
-exit $TRAIN_RC
+# AUTO_SHUTDOWN=0: keep the container alive so the operator can SSH in and
+# inspect /workspace/training.log. Without this, the container's CMD exits
+# when training finishes/crashes and `ssh` fails with "container is not
+# running", making post-mortem impossible.
+echo ""
+echo "[bootstrap] training exited with code $TRAIN_RC."
+echo "[bootstrap] AUTO_SHUTDOWN=0 — keeping container alive."
+echo "[bootstrap] SSH in and: tail /workspace/training.log"
+echo "[bootstrap] Manually stop the pod when done."
+echo ""
+exec sleep infinity
