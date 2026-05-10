@@ -85,7 +85,7 @@ See [n8n-Orchestration](https://github.com/fawraw/triple-pendulum-sim2real/wiki/
 | 0. Literature gap confirmed | ✅ | 2026-05-08 |
 | 1. MuJoCo model, 3 links on cart | ✅ | 2026-05-08 |
 | 2. Stabilize UUU in sim (TQC) | 🟡 partial | 2026-05-08 |
-| 3. All 8 EPs stabilized in sim | 🟡 M3b-v2 training (env fix applied, ETA ~5h, ~$1.50) | 2026-05-10 |
+| 3. All 8 EPs stabilized in sim | 🟡 M3b-v2 training (env fixes: per-link threshold + grace + reward, ETA ~1h) | 2026-05-10 |
 | 4. 56 transitions in sim | ⬜ scaffolded | |
 | 5. Domain randomization | ⬜ | |
 | 6. Hardware v1 assembled | ⬜ | |
@@ -122,9 +122,11 @@ See [n8n-Orchestration](https://github.com/fawraw/triple-pendulum-sim2real/wiki/
 > - Reward: `ang_cost = 5*err[0]² + err[1]² + err[2]²` (link 1 weighted 5×)
 > - `vel_cost` coefficient: 0.01 → 0.05
 >
-> **M3b-v2** (2M steps, all fixes, gradient_steps=8, n_envs=8) launched on RunPod A5000. ETA ~5h, ~$1.50.
+> **M3b-v2** (2M steps, all fixes, gradient_steps=8, n_envs=8) launched on RunPod A5000. ~$1.50 total; ETA ~1h remaining as of 2026-05-10 ~17h CET.
+>
+> *Note on link numbering:* the config label "UDD" uses Top→Bottom convention (U = top link up); the code uses bit 0 = link 1 = cart-attached (bottom) link. Both systems are internally consistent.
 
-**Cumulative training cost on RunPod so far:** ~$2 USD (M3b cloud + probes). Local CT 1018 free but slow (~12h/2M steps).
+**Cumulative training cost on RunPod so far:** ~$4 USD (M3b cloud + probes + M3b-v2). Local CT 1018 free but slow (~12h/2M steps).
 
 ## Tech stack
 
@@ -217,19 +219,31 @@ training/
   pipeline_notifier.py POSTs to n8n + writes results JSON
   pipeline_stages.json Stage transitions (read by n8n)
 scripts/
-  launcher_api.py      HTTP launcher for n8n to start training
-  render_rollout.py    Render saved policy to MP4
-  eval_policy.py       Per-EP evaluation
-  plot_learning_curve.py
+  launcher_api.py         HTTP launcher API for n8n to start training (:8765)
+  runpod_bootstrap.sh     Cloud pod boot script (DNS wait, pip fix, idle watchdog)
+  report_to_telegram.py   Exfil results from cloud pods via Telegram (SSH fallback)
+  tp_status.sh            All-in-one pipeline status (launcher + MLflow + results)
+  render_rollout.py       Render saved policy to MP4
+  eval_policy.py          Per-EP evaluation
+runpod/
+  Dockerfile              CUDA image definition (PyTorch 2.4+MuJoCo+osmesa)
+  README.md               Operator setup guide, GPU types, cost table, gotchas
 n8n/
-  triple_pendulum_pipeline.json   Workflow definition (importable)
+  triple_pendulum_pipeline.json  Orchestration workflow (importable)
+  triple_pendulum_bot.json       Telegram bot (11 commands, polling-based)
 hardware/
-  bom/                 Bill of materials (planned for M6)
+  bom/                    Bill of materials (planned for M6)
 docs/
-  roadmap.md           Mirror of the wiki Roadmap (canonical: wiki)
-  literature/          Annotated bibliography
-tests/                 pytest unit tests (env, notifier, stages, launcher)
-assets/                Figures and demo media
+  roadmap.md              Mirror of the wiki Roadmap (canonical: wiki)
+  runbook.md              Operational troubleshooting (8 failure scenarios)
+  launcher_api.service    Systemd unit template (KillMode=process)
+  literature/             Annotated bibliography
+tests/                    pytest unit tests (env, notifier, stages, launcher, m4)
+results/                  Per-run JSON snapshots from pipeline_notifier (committed)
+CHANGELOG.md              Dated changelog
+.githooks/
+  pre-commit              Secret-pattern scanner, chains to global Lab Perso hook
+assets/                   Figures and demo media
 ```
 
 ## Reproducibility

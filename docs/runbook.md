@@ -168,6 +168,30 @@ for metric in timesteps rollout_ep_rew_mean; do
 done
 ```
 
+## All-in-one status
+
+```bash
+./scripts/tp_status.sh
+# Shows: launcher active processes + last 3 MLflow runs (with % progress + ETA) + recent results JSON files
+```
+
+## Run a probe (quick EP-specific fix validation, 200K steps)
+
+```bash
+curl -s -X POST http://10.1.4.232:8765/launch -H "Content-Type: application/json" \
+  -d '{"secret":"<LAUNCHER_SECRET>","module":"training.train_m3_all_eps","config":"training/configs/probe_ep4_v2_tqc.yaml"}'
+# Or on RunPod (faster): spawn pod with TP_STAGE_CONFIG=probe_ep4_v2_tqc.yaml
+```
+
+## Exfil results from cloud pod when SSH is flaky
+
+```bash
+# Spawn a one-shot pod that reads /workspace/results/*.json + bootstrap.log
+# and POSTs a summary to Telegram, then podStop.
+# Uses scripts/report_to_telegram.py — requires TELEGRAM_FALLBACK_BOT_TOKEN
+# See Cloud-Training.md § "Reading results back" for full command.
+```
+
 ## Cloud GPU (RunPod)
 
 Local CT 1018 is CPU-only. For M3c (4M steps, ~16h on CT) and M4 (5M steps,

@@ -18,7 +18,8 @@ Confirmed by data: across two M3b runs (CPU `gradient_steps=1` and GPU `gradient
 
 - **Per-link fall threshold** (`sim/envs/triple_pendulum_env.py`): `FALL_THRESHOLD_UP_RAD=0.6` for links targeted at 0 rad, `FALL_THRESHOLD_DOWN_RAD=1.5` for links targeted at π. `_fall_thresholds()` helper picks the right one per link based on the current `target_ep`.
 - **Reward weighting**: `ang_cost = 5*err[0]² + err[1]² + err[2]²` (link 1 weighted 5× as the structural pivot). `vel_cost` coefficient bumped 0.01 → 0.05.
-- **Soft termination** (opt-in via `fall_grace_steps` env param): instead of failing on a single step over threshold, tolerate N consecutive steps. Default 0 (legacy strict). Probe v2 uses 20.
+- **Soft termination** (opt-in via `fall_grace_steps` env param): instead of failing on a single step over threshold, tolerate N consecutive steps. Default 0 (legacy strict, used by eval). Probe v2 and `m3b_all_eps_tqc.yaml` use 20 (~40ms grace at 50Hz). Eval always uses default=0 for fair scoring.
+- **7 new `tests/test_env.py` tests** covering all new env features: `test_per_link_threshold_up_is_tight`, `test_per_link_threshold_down_is_loose`, `test_ep4_hanging_links_do_not_trigger_fall` (reproduces and validates the pre-fix bug), `test_fall_grace_steps_delays_termination`, `test_fall_counter_resets_on_recovery`, `test_reset_clears_fall_counter`, `test_reward_link1_weighted_5x`.
 
 ### Added — cloud GPU training (RunPod)
 
@@ -54,9 +55,22 @@ Confirmed by data: across two M3b runs (CPU `gradient_steps=1` and GPU `gradient
 - `training/configs/probe_ep4_tqc.yaml`: 200K-step EP4-fixed probe (validates audit hypothesis #1).
 - `training/configs/probe_ep4_v2_tqc.yaml`: same + `fall_grace_steps=20` (audit hypothesis #2).
 
+### Added — Configs (afternoon)
+
+- `training/configs/probe_ep4_v2_tqc.yaml`: 200K EP4-fixed + `fall_grace_steps=20` (validates soft-termination hypothesis in isolation from per-link fix).
+
+### Launched — M3b-v2 (afternoon)
+
+- M3b-v2 launched on RunPod A5000 (pod `r0ghhvrt529gy0`): 2M steps, [256,256], n_envs=8, gradient_steps=8, fall_grace_steps=20, per-link threshold, reward weighting. ETA ~1h20min from 16:00 CET. Expected to break the EP4/EP6=0% plateau that persisted across 3 prior runs.
+
+### Fixed — report_to_telegram.py regex (afternoon)
+
+- `collect_done_blocks()` regex changed from non-greedy `.*?` with `re.DOTALL` (could merge consecutive training runs) to `re.split` on `^DONE in` line boundaries. Each DONE block now correctly isolated to one training run.
+
 ### Changed — Existing configs
 
 - `training/configs/m3b_all_eps_tqc.yaml`, `m3c`, `m4_transitions`: `gradient_steps: 1 → 8` to match `n_envs=8` (preserves 1-grad-per-env-transition density).
+- `training/configs/m3b_all_eps_tqc.yaml`: added `fall_grace_steps: 20` in env section (applied during training; eval always uses strict default=0).
 
 ### Fixed — Operational bugs (multiple in-session live fixes)
 
@@ -77,7 +91,19 @@ Confirmed by data: across two M3b runs (CPU `gradient_steps=1` and GPU `gradient
 3. **Round 3** — production: launcher RestartSec budgeting, signal handling, log persistence, cost guards.
 4. **Round 4** — RL training: per-link fall threshold (the actual blocker), reward weighting, gradient density misconfig.
 
-Total commits today: ~30. See `git log --since=2026-05-09` for the full list.
+### Added — Wiki pages (afternoon)
+
+- `Bot.md` (new): Telegram bot architecture, all 11 commands with backend mapping, auth, gotchas.
+- `Cloud-Training.md` (new): RunPod setup, lifecycle diagram, common issues (DNS, blinker, torch CUDA, region lock, SSH flakiness, cost guard), reading results back.
+- Updated `Home.md`, `Results.md`, `Roadmap.md`, `Training-Pipeline.md` with current state.
+
+### Added — Skills (afternoon)
+
+- `~/.claude/skills/runpod/` — RunPod cloud GPU management (spawn, stop, GPU util, balance, SSH, gotchas).
+- `~/.claude/skills/mlflow/` — MLflow queries (list runs + ETA, per-EP success, cleanup zombies).
+- `~/.claude/skills/triple-pendulum/` — Project-specific ops (launch stages, baseline table, bot commands, architecture).
+
+Total commits today: ~35. See `git log --since=2026-05-09` for the full list.
 
 ### Known gaps (carried over)
 
