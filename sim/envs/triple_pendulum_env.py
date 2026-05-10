@@ -149,11 +149,16 @@ class TriplePendulumEnv(gym.Env):
     def _reward(self, fallen: bool) -> float:
         st = self._joint_state()
         err = self._angle_error()
-        # Audit fix: weight link 1 5x more than links 2-3. Link 1 is the
-        # structural pivot — keeping it correct dominates stability of the
-        # whole stack. Without weighting, the policy spreads gradient evenly
-        # across links and fails on EPs where link 1 must stay vertical.
-        ang_cost = float(5.0 * err[0] ** 2 + err[1] ** 2 + err[2] ** 2)
+        # Per-EP adaptive reward weighting: links targeted UP (target≈0) get
+        # 5× weight, links targeted DOWN (target≈π) get 1×.
+        # The original fix weighted err[0] (link 1, cart-attached) uniformly 5×,
+        # but for EP4 (links 1+2 DOWN, link 3 UP) this penalises the hanging
+        # link 5× while giving only 1× to the inverted top link — inverting the
+        # intended gradient. The adaptive version weights each link correctly
+        # based on its target orientation.
+        target = ep_target_angles(self.target_ep)
+        weights = np.where(np.isclose(target, 0.0), 5.0, 1.0)
+        ang_cost = float(np.sum(weights * err ** 2))
         # Bumped 0.01 -> 0.05 to discourage flailing on hard EPs.
         vel_cost = 0.05 * float(st[3] ** 2 + st[5] ** 2 + st[7] ** 2)
         cart_cost = 0.1 * float(st[0] ** 2)

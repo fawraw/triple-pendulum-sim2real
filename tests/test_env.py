@@ -268,45 +268,72 @@ def test_reset_clears_fall_counter():
     e.close()
 
 
-def test_reward_link1_weighted_5x():
-    """Link 1 angular error contributes 5× to ang_cost vs links 2 and 3.
-
-    Key: qpos are RELATIVE angles (θᵢ_abs = qpos[1]+...+qpos[i]).
-    To isolate link 1 error: qpos[1]=ε, qpos[2]=-ε → θ₁=ε, θ₂=0, θ₃=0.
-    To isolate link 2 error: qpos[1]=0, qpos[2]=ε, qpos[3]=-ε → θ₁=0, θ₂=ε, θ₃=0."""
+def test_reward_adaptive_weighting_ep7():
+    """EP7 (all UP, targets=[0,0,0]): all links get 5× weight.
+    Error on link 1 vs link 2 should produce equal reward penalty since both are UP."""
     import mujoco, numpy as np
     e7 = TriplePendulumEnv(target_ep=7, init_mode="near_target",
                            init_noise=0.0, max_episode_steps=50)
     eps = 0.1
 
-    # Case 1: only link 1 has error ε (θ₁=ε, θ₂=0, θ₃=0)
+    # Case 1: only link 1 error ε (θ₁=ε, θ₂=0, θ₃=0)
     e7.reset(seed=0)
-    e7.data.qpos[1] = eps    # θ₁ = eps
-    e7.data.qpos[2] = -eps   # θ₂ = eps + (-eps) = 0
-    e7.data.qpos[3] = 0.0    # θ₃ = 0
+    e7.data.qpos[1] = eps
+    e7.data.qpos[2] = -eps
+    e7.data.qpos[3] = 0.0
     mujoco.mj_forward(e7.model, e7.data)
-    err1 = e7._angle_error()
-    assert abs(err1[0] - eps) < 0.001, f"Expected err[0]≈{eps}, got {err1}"
-    assert abs(err1[1]) < 0.001, f"Expected err[1]≈0, got {err1}"
     r1 = e7._reward(fallen=False)
 
-    # Case 2: only link 2 has error ε (θ₁=0, θ₂=ε, θ₃=0)
+    # Case 2: only link 2 error ε (θ₁=0, θ₂=ε, θ₃=0)
     e7.reset(seed=0)
     e7.data.qpos[1] = 0.0
-    e7.data.qpos[2] = eps    # θ₂ = 0 + eps = eps
-    e7.data.qpos[3] = -eps   # θ₃ = 0 + eps + (-eps) = 0
+    e7.data.qpos[2] = eps
+    e7.data.qpos[3] = -eps
     mujoco.mj_forward(e7.model, e7.data)
-    err2 = e7._angle_error()
-    assert abs(err2[0]) < 0.001, f"Expected err2[0]≈0, got {err2}"
-    assert abs(err2[1] - eps) < 0.001, f"Expected err2[1]≈{eps}, got {err2}"
     r2 = e7._reward(fallen=False)
     e7.close()
 
-    # ang_cost_1 = 5*eps², ang_cost_2 = eps²  → diff = 4*eps²
-    # Verify the difference in rewards ≈ 4*eps² (vel/cart/ctrl costs are equal)
-    ang_diff = abs(r1) - abs(r2)
-    expected_diff = 4 * eps ** 2
-    assert ang_diff > expected_diff * 0.8, (
-        f"Expected |r1|-|r2| ≈ 4*eps²={expected_diff:.4f}, got {ang_diff:.4f}. "
+    # Both links are UP in EP7 → both get weight 5 → ang_cost equal → rewards equal
+    assert abs(abs(r1) - abs(r2)) < 0.005, (
+        f"EP7: link 1 and link 2 errors should give equal penalty (both UP, weight=5). "
         f"r1={r1:.4f}, r2={r2:.4f}"
+    )
+
+
+def test_reward_adaptive_weighting_ep4():
+    """EP4 (links 1+2 DOWN, link 3 UP): link 3 gets 5×, links 1+2 get 1×.
+    Error on link 3 should produce 5× more reward penalty than error on link 2."""
+    import mujoco, numpy as np
+    # EP4 targets = [π, π, 0]: link 3 UP (weight=5), links 1+2 DOWN (weight=1)
+    e4 = TriplePendulumEnv(target_ep=4, init_mode="near_target",
+                           init_noise=0.0, max_episode_steps=50)
+    eps = 0.05
+
+    # Case A: only link 3 has error ε from UP target (θ₃=ε, others at target)
+    # After EP4 reset: qpos[1]=π, qpos[2]=0, qpos[3]=-π
+    # θ₃ = qpos[1]+qpos[2]+qpos[3]. To get θ₃=ε: qpos[3] = ε - qpos[1] - qpos[2] = ε - π
+    e4.reset(seed=0)
+    e4.data.qpos[3] = eps - np.pi  # θ₃ = π + 0 + (ε-π) = ε → err[2]=ε-0=ε
+    mujoco.mj_forward(e4.model, e4.data)
+    err_a = e4._angle_error()
+    r_a = e4._reward(fallen=False)
+
+    # Case B: only link 2 has error ε from DOWN target (θ₂=π-ε, err[1]=-ε)
+    # qpos[2]=-ε → θ₂=π-ε, err[1]=-ε; compensate qpos[3] to keep θ₃=0
+    e4.reset(seed=0)
+    e4.data.qpos[2] = -eps           # θ₂=π-ε → err[1]=-ε (DOWN, weight=1)
+    e4.data.qpos[3] = eps - np.pi    # θ₃=π+(−ε)+(ε−π)=0 → err[2]=0
+    mujoco.mj_forward(e4.model, e4.data)
+    err_b = e4._angle_error()
+    r_b = e4._reward(fallen=False)
+    e4.close()
+
+    # ang_cost_A ≈ 5*ε² (link 3 UP, weight=5), ang_cost_B ≈ 1*ε² (link 2 DOWN, weight=1)
+    diff = abs(r_a) - abs(r_b)
+    expected = 4 * eps ** 2
+    assert abs(err_a[2] - eps) < 0.01, f"Setup error: err_a[2]={err_a[2]:.3f}, expected ε={eps}"
+    assert abs(err_b[1] + eps) < 0.01, f"Setup error: err_b[1]={err_b[1]:.3f}, expected -ε={-eps}"
+    assert diff > expected * 0.7, (
+        f"EP4: link 3 UP (weight=5) error should cost ~5× more than link 2 DOWN (weight=1). "
+        f"diff={diff:.4f}, expected≈{expected:.4f}. r_a={r_a:.4f}, r_b={r_b:.4f}"
     )

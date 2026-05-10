@@ -1,0 +1,43 @@
+# Probe: validate reward fix on EP6 (UUD = links 1 DOWN, links 2+3 UP).
+# With adaptive weighting, links 2+3 now get 5× weight (they're UP).
+# Previously links 2+3 each got only 1× — wrong focus for this EP.
+# 200K steps should show improvement vs 0% baseline.
+
+stage: PROBE_EP6
+
+env:
+  target_ep: 6              # UUD: link 1 DOWN, links 2+3 UP
+  target_mode: fixed
+  max_episode_steps: 1000
+  init_mode: near_target
+  init_noise: 0.05
+  fall_grace_steps: 20
+
+algo: TQC
+total_timesteps: 200_000
+n_envs: 8
+
+tqc:
+  policy: MlpPolicy
+  learning_rate: 3.0e-4
+  buffer_size: 200_000
+  batch_size: 512
+  tau: 0.005
+  gamma: 0.99
+  train_freq: 1
+  gradient_steps: 8
+  top_quantiles_to_drop_per_net: 2
+  policy_kwargs:
+    net_arch: [256, 256]
+    n_critics: 3
+    n_quantiles: 25
+
+callbacks:
+  rollout_log_freq: 5_000
+  checkpoint_freq: 50_000
+
+eval:
+  freq: 25_000
+  n_episodes: 10
+  deterministic: true
+  final_n_episodes: 80
