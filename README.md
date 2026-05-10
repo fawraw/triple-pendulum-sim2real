@@ -85,7 +85,7 @@ See [n8n-Orchestration](https://github.com/fawraw/triple-pendulum-sim2real/wiki/
 | 0. Literature gap confirmed | ✅ | 2026-05-08 |
 | 1. MuJoCo model, 3 links on cart | ✅ | 2026-05-08 |
 | 2. Stabilize UUU in sim (TQC) | 🟡 partial | 2026-05-08 |
-| 3. All 8 EPs stabilized in sim | 🔴 M3b plateau 67-68% — env termination bug identified | 2026-05-10 |
+| 3. All 8 EPs stabilized in sim | 🟡 M3b-v2 training (env fix applied, ETA ~5h, ~$1.50) | 2026-05-10 |
 | 4. 56 transitions in sim | ⬜ scaffolded | |
 | 5. Domain randomization | ⬜ | |
 | 6. Hardware v1 assembled | ⬜ | |
@@ -116,7 +116,13 @@ See [n8n-Orchestration](https://github.com/fawraw/triple-pendulum-sim2real/wiki/
 
 > **Diagnosis (audit 2026-05-10):** the plateau is **structural, not capacity-bound**. The env's `_is_fallen()` used a single 0.6 rad threshold for all 3 links. EP4 (UDD) and EP6 (UUD) need link 1 vertical while links 2–3 hang — but the cart's stabilizing motion shakes the hanging links naturally past 0.6 rad → false-positive fall → -100 penalty → **policy can't learn**. EP0–3 work (link 1 stable when down). EP7 works (all targets at 0). EP4/EP6 stuck at 0%.
 >
-> **Fix:** per-link fall threshold based on target orientation (0.6 rad UP, 1.5 rad DOWN), plus 5× weighting on link 1 in the reward. Validation in progress on a 200K-step EP4-fixed probe pair (`probe_ep4_v1` and `probe_ep4_v2` adding soft-termination). Full M3b retry with the env fix scheduled once probes confirm.
+> **Fixes applied (`sim/envs/triple_pendulum_env.py`):**
+> - Per-link fall threshold: 0.6 rad for links targeted UP, 1.5 rad for links targeted DOWN
+> - `fall_grace_steps=20` in training config: 20 consecutive over-threshold steps before termination (~40ms grace period)
+> - Reward: `ang_cost = 5*err[0]² + err[1]² + err[2]²` (link 1 weighted 5×)
+> - `vel_cost` coefficient: 0.01 → 0.05
+>
+> **M3b-v2** (2M steps, all fixes, gradient_steps=8, n_envs=8) launched on RunPod A5000. ETA ~5h, ~$1.50.
 
 **Cumulative training cost on RunPod so far:** ~$2 USD (M3b cloud + probes). Local CT 1018 free but slow (~12h/2M steps).
 
