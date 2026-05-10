@@ -191,14 +191,20 @@ def test_ep4_hanging_links_do_not_trigger_fall():
     #
     # To give link 2 an error of 1.0 rad: abs_θ₂ = π-1.0
     # → qpos[2] = abs_θ₂ - qpos[1] = (π-1.0) - π = -1.0
-    e.data.qpos[2] = -1.0  # abs_θ₂ = π + (-1.0) = π-1.0 → err[1] = -1.0
+    # abs angles: θ = qpos[1], θ₂ = qpos[1]+qpos[2], θ₃ = qpos[1]+qpos[2]+qpos[3]
+    # After reset(EP4,noise=0): qpos[1]=π, qpos[2]=0, qpos[3]=-π
+    # Change link 2 by 1.0 rad: qpos[2] = -1.0 → θ₂ = π-1.0 → err[1] = -1.0
+    # But this also shifts θ₃! Compensate qpos[3] to keep θ₃=0 (UP target):
+    # θ₃ = qpos[1]+qpos[2]+qpos[3] = π + (-1.0) + qpos[3] = 0 → qpos[3] = 1.0-π
+    e.data.qpos[2] = -1.0         # θ₂ = π-1.0 → err[1] = -1.0  (< 1.5 DOWN threshold)
+    e.data.qpos[3] = 1.0 - np.pi  # θ₃ = 0 → err[2] = 0           (< 0.6 UP threshold)
     mujoco.mj_forward(e.model, e.data)
     err = e._angle_error()
     assert abs(abs(err[1]) - 1.0) < 0.05, f"Expected |err[1]|≈1.0, got {err[1]:.3f}"
+    assert abs(err[2]) < 0.05,            f"Expected err[2]≈0, got {err[2]:.3f}"
     assert not e._is_fallen(), (
         f"Link 2 at 1.0 rad error from DOWN target should NOT trigger fall "
-        f"(DOWN threshold=1.5 rad). err={np.round(err,3)}. "
-        f"Old global 0.6 threshold would have triggered this (pre-fix bug)."
+        f"(DOWN threshold=1.5 rad). err={np.round(err,3)}."
     )
     e.close()
 
