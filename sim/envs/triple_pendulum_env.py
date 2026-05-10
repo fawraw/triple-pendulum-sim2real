@@ -95,10 +95,18 @@ class TriplePendulumEnv(gym.Env):
     def _obs(self) -> np.ndarray:
         return np.concatenate([self._joint_state(), self._target_onehot()]).astype(np.float32)
 
-    # Threshold past which the link is considered "fallen" and the episode is
-    # terminated. With near-target init, this gives a much sharper learning
-    # signal than running every episode to truncation.
-    FALL_THRESHOLD_RAD = 0.6  # ~34 degrees
+    # Per-link fall thresholds based on whether the link is targeted UP or DOWN.
+    # CRITICAL FIX (audit 2026-05-10): the previous global 0.6 rad threshold
+    # made EP4 (UDD) / EP6 (UUD) untrainable: when link 1 is held vertical,
+    # the cart's stabilizing motion shakes the hanging links 2-3, which
+    # naturally swing well past 0.6 rad. The env was terminating with -100
+    # FALL_PENALTY on every recovery attempt -> 0% success on those EPs.
+    #
+    # New scheme: tight threshold for links targeted UP (must stay near
+    # vertical to count as success), loose threshold for links targeted DOWN
+    # (free to swing while link 1 is being stabilized).
+    FALL_THRESHOLD_UP_RAD   = 0.6   # ~34deg, link must stay near vertical
+    FALL_THRESHOLD_DOWN_RAD = 1.5   # ~86deg, generous for hanging dynamics
 
     def _angle_error(self) -> np.ndarray:
         st = self._joint_state()
@@ -106,11 +114,14 @@ class TriplePendulumEnv(gym.Env):
         err = np.array([st[2], st[4], st[6]]) - target
         return np.arctan2(np.sin(err), np.cos(err))
 
+    def _fall_thresholds(self) -> np.ndarray:
+        target = ep_target_angles(self.target_ep)
+        # target[i] == 0.0 means link i is targeted UP, target[i] == pi DOWN
+        return np.where(np.isclose(target, 0.0), self.FALL_THRESHOLD_UP_RAD,
+                                                  self.FALL_THRESHOLD_DOWN_RAD)
+
     # Penalty applied at the terminal step when the policy fails (cart
-    # off-rail or any link tipped past FALL_THRESHOLD_RAD). Without this,
-    # early termination removes accumulated cost rather than penalizing
-    # failure, which gives a flat-reward landscape where doing nothing is
-    # a fixed-point optimum.
+    # off-rail or any link tipped past its per-link fall threshold).
     FALL_PENALTY = 100.0
 
     def _is_fallen(self) -> bool:
@@ -118,15 +129,20 @@ class TriplePendulumEnv(gym.Env):
             return True
         if self.init_mode == "near_target":
             err = self._angle_error()
-            if np.any(np.abs(err) > self.FALL_THRESHOLD_RAD):
+            if np.any(np.abs(err) > self._fall_thresholds()):
                 return True
         return False
 
     def _reward(self, fallen: bool) -> float:
         st = self._joint_state()
         err = self._angle_error()
-        ang_cost = float(np.sum(err ** 2))
-        vel_cost = 0.01 * float(st[3] ** 2 + st[5] ** 2 + st[7] ** 2)
+        # Audit fix: weight link 1 5x more than links 2-3. Link 1 is the
+        # structural pivot — keeping it correct dominates stability of the
+        # whole stack. Without weighting, the policy spreads gradient evenly
+        # across links and fails on EPs where link 1 must stay vertical.
+        ang_cost = float(5.0 * err[0] ** 2 + err[1] ** 2 + err[2] ** 2)
+        # Bumped 0.01 -> 0.05 to discourage flailing on hard EPs.
+        vel_cost = 0.05 * float(st[3] ** 2 + st[5] ** 2 + st[7] ** 2)
         cart_cost = 0.1 * float(st[0] ** 2)
         u = float(self.data.ctrl[0])
         ctrl_cost = 0.001 * u ** 2

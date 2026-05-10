@@ -1,0 +1,42 @@
+# Probe config: validate audit hypothesis (per-link fall threshold) on EP4.
+# 200K steps target_mode=fixed target_ep=4 — if EP4 success rate jumps from
+# 0% to >50%, the audit fix is confirmed and we run full M3b 2M.
+# Cost on RTX A5000: ~10 min, ~$0.05.
+
+stage: PROBE_EP4
+
+env:
+  target_ep: 4              # UDD — link 1 up, links 2-3 hanging
+  target_mode: fixed
+  max_episode_steps: 1000
+  init_mode: near_target
+  init_noise: 0.05
+
+algo: TQC
+total_timesteps: 200_000
+n_envs: 8
+
+tqc:
+  policy: MlpPolicy
+  learning_rate: 3.0e-4
+  buffer_size: 200_000
+  batch_size: 512
+  tau: 0.005
+  gamma: 0.99
+  train_freq: 1
+  gradient_steps: 8
+  top_quantiles_to_drop_per_net: 2
+  policy_kwargs:
+    net_arch: [256, 256]
+    n_critics: 3
+    n_quantiles: 25
+
+callbacks:
+  rollout_log_freq: 5_000
+  checkpoint_freq:  50_000
+
+eval:
+  freq: 25_000
+  n_episodes: 10
+  deterministic: true
+  final_n_episodes: 80     # 10 per EP avg (only EP4 in target_mode=fixed but eval rolls all)
