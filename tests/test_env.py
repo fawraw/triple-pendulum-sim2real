@@ -174,19 +174,25 @@ def test_per_link_threshold_down_is_loose():
 
 def test_ep4_hanging_links_do_not_trigger_fall():
     """EP4 (UDD): link 1 targeted UP (strict), links 2-3 targeted DOWN (loose).
-    A hanging link swinging 1.0 rad (< 1.5 rad DOWN threshold) must NOT trip.
-    This is the pre-fix bug that caused EP4=0% in M3b."""
+    Link 2 with abs_angle = π-1.0 has |error|=1.0 rad from target π.
+    1.0 rad < 1.5 rad DOWN threshold → must NOT trigger fall.
+    This is the pre-fix bug (old threshold 0.6 would have triggered here)."""
     import mujoco, numpy as np
     e = TriplePendulumEnv(target_ep=4, init_mode="near_target",
                           init_noise=0.0, max_episode_steps=50)
     e.reset(seed=0)
-    # Force link 2 to swing 1.0 rad (well past old 0.6 global threshold,
-    # but below the new DOWN threshold of 1.5 rad).
-    e.data.qpos[2] = 1.0  # relative angle of hinge2 (link 2)
+    # qpos[2] is the RELATIVE angle of hinge2 (link 2 relative to link 1).
+    # After reset: qpos[1]≈0 (link 1 UP), qpos[2]≈π (link 2 DOWN relative).
+    # Absolute θ₂ = qpos[1]+qpos[2]. Target θ₂ = π.
+    # To get |err|=1.0: abs_θ₂ = π-1.0 → qpos[2] = (π-1.0) - qpos[1] ≈ π-1.0
+    e.data.qpos[2] = np.pi - 1.0  # abs_θ₂ = 0 + (π-1.0) → err = (π-1.0)-π = -1.0
     mujoco.mj_forward(e.model, e.data)
+    err = e._angle_error()
+    assert abs(err[1]) < 1.1, f"Expected |err[1]|≈1.0, got {err[1]:.3f}"
     assert not e._is_fallen(), (
-        "Hanging link 2 at 1.0 rad should NOT trigger fall for EP4 "
-        "(target=DOWN, threshold=1.5 rad). Pre-fix bug reproduced."
+        f"Hanging link 2 at 1.0 rad error (< 1.5 rad DOWN threshold) should NOT "
+        f"trigger fall for EP4. err={err}. Pre-fix (global 0.6 threshold) would "
+        f"have triggered this."
     )
     e.close()
 
@@ -251,31 +257,44 @@ def test_reset_clears_fall_counter():
 
 
 def test_reward_link1_weighted_5x():
-    """Link 1 angular error contributes 5× to ang_cost vs links 2 and 3."""
+    """Link 1 angular error contributes 5× to ang_cost vs links 2 and 3.
+
+    Key: qpos are RELATIVE angles (θᵢ_abs = qpos[1]+...+qpos[i]).
+    To isolate link 1 error: qpos[1]=ε, qpos[2]=-ε → θ₁=ε, θ₂=0, θ₃=0.
+    To isolate link 2 error: qpos[1]=0, qpos[2]=ε, qpos[3]=-ε → θ₁=0, θ₂=ε, θ₃=0."""
     import mujoco, numpy as np
-    # EP7: all targets at 0. Push only link 1 by ε, everything else at 0.
     e7 = TriplePendulumEnv(target_ep=7, init_mode="near_target",
                            init_noise=0.0, max_episode_steps=50)
-    e7.reset(seed=0)
     eps = 0.1
-    # err for link 1 only = ε, links 2-3 = 0 → ang_cost = 5*eps²
-    e7.data.qpos[1] = eps
-    e7.data.qpos[2] = 0.0
-    e7.data.qpos[3] = 0.0
+
+    # Case 1: only link 1 has error ε (θ₁=ε, θ₂=0, θ₃=0)
+    e7.reset(seed=0)
+    e7.data.qpos[1] = eps    # θ₁ = eps
+    e7.data.qpos[2] = -eps   # θ₂ = eps + (-eps) = 0
+    e7.data.qpos[3] = 0.0    # θ₃ = 0
     mujoco.mj_forward(e7.model, e7.data)
+    err1 = e7._angle_error()
+    assert abs(err1[0] - eps) < 0.001, f"Expected err[0]≈{eps}, got {err1}"
+    assert abs(err1[1]) < 0.001, f"Expected err[1]≈0, got {err1}"
     r1 = e7._reward(fallen=False)
 
-    # Now push only link 2 by ε → ang_cost = 1*eps² (weight=1)
+    # Case 2: only link 2 has error ε (θ₁=0, θ₂=ε, θ₃=0)
     e7.reset(seed=0)
     e7.data.qpos[1] = 0.0
-    e7.data.qpos[2] = eps
-    e7.data.qpos[3] = 0.0
+    e7.data.qpos[2] = eps    # θ₂ = 0 + eps = eps
+    e7.data.qpos[3] = -eps   # θ₃ = 0 + eps + (-eps) = 0
     mujoco.mj_forward(e7.model, e7.data)
+    err2 = e7._angle_error()
+    assert abs(err2[0]) < 0.001, f"Expected err2[0]≈0, got {err2}"
+    assert abs(err2[1] - eps) < 0.001, f"Expected err2[1]≈{eps}, got {err2}"
     r2 = e7._reward(fallen=False)
     e7.close()
 
-    # |r1| should be ~5× |r2| (link 1 weighted 5×)
-    # Exact: r1 ≈ -(5*eps² + vel_cost + cart_cost), r2 ≈ -(1*eps² + ...)
-    assert abs(r1) > abs(r2) * 4, (
-        f"Link 1 reward contribution should be ~5× link 2; got r1={r1:.4f} r2={r2:.4f}"
+    # ang_cost_1 = 5*eps², ang_cost_2 = eps²  → diff = 4*eps²
+    # Verify the difference in rewards ≈ 4*eps² (vel/cart/ctrl costs are equal)
+    ang_diff = abs(r1) - abs(r2)
+    expected_diff = 4 * eps ** 2
+    assert ang_diff > expected_diff * 0.8, (
+        f"Expected |r1|-|r2| ≈ 4*eps²={expected_diff:.4f}, got {ang_diff:.4f}. "
+        f"r1={r1:.4f}, r2={r2:.4f}"
     )
