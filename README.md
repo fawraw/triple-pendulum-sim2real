@@ -85,7 +85,7 @@ See [n8n-Orchestration](https://github.com/fawraw/triple-pendulum-sim2real/wiki/
 | 0. Literature gap confirmed | ✅ | 2026-05-08 |
 | 1. MuJoCo model, 3 links on cart | ✅ | 2026-05-08 |
 | 2. Stabilize UUU in sim (TQC) | 🟡 partial | 2026-05-08 |
-| 3. All 8 EPs stabilized in sim | 🟡 M3b training (2M steps) | 2026-05-09 |
+| 3. All 8 EPs stabilized in sim | 🔴 M3b plateau 67-68% — env termination bug identified | 2026-05-10 |
 | 4. 56 transitions in sim | ⬜ scaffolded | |
 | 5. Domain randomization | ⬜ | |
 | 6. Hardware v1 assembled | ⬜ | |
@@ -96,25 +96,29 @@ See [n8n-Orchestration](https://github.com/fawraw/triple-pendulum-sim2real/wiki/
 
 ### Latest results
 
-**M2 (UUU, 150K steps, [128,128]):** mean episode length 824/1000 over 20 deterministic eval rollouts, peak 1000. Acceptance threshold not yet met but pipeline validated end-to-end.
+**M2 (UUU, 150K steps, [128,128]):** mean episode length 824/1000 over 20 deterministic eval rollouts, peak 1000. Pipeline validated end-to-end.
 
 ![learning curve](assets/learning_curve_m2.png)
 
-**M3 baseline (400K steps, [256,256], target resampled uniformly):**
+**M3b (2M steps) — two parallel runs converge to ~67%:**
 
-| EP | Config | Success rate |
-|:--:|:------:|:------------:|
-| 0 | DDD | 100% |
-| 1 | DDU | 100% |
-| 2 | DUD | 50% |
-| 3 | DUU | 80% |
-| 4 | UDD | 0–10% |
-| 5 | UDU | 0–10% |
-| 6 | UUD | 0–10% |
-| 7 | UUU | 0–10% |
-| **Overall** | | **42.5%** |
+| EP | Config | CT 1018 (CPU, n_envs=1, grad=1) | RunPod (A5000, n_envs=8, grad=8) |
+|:--:|:------:|:------------:|:------------:|
+| 0 | DDD | 100% | 100% |
+| 1 | DDU | 100% | 100% |
+| 2 | DUD | 50% | 100% |
+| 3 | DUU | 80% | 100% |
+| 4 | UDD | **0%** | **0%** |
+| 5 | UDU | 70% | 60% |
+| 6 | UUD | **0%** | **0%** |
+| 7 | UUU | 80% | 80% |
+| **Overall** | | **67.5%** | **68%** |
 
-EP0/EP1 (gravity-assisted) trivial. EP4–EP7 (≥1 link upright) need more steps or a curriculum. **M3b (2M steps, [256,256], 1M buffer)** is currently training; results posted to the [Results](https://github.com/fawraw/triple-pendulum-sim2real/wiki/Results) wiki page on completion.
+> **Diagnosis (audit 2026-05-10):** the plateau is **structural, not capacity-bound**. The env's `_is_fallen()` used a single 0.6 rad threshold for all 3 links. EP4 (UDD) and EP6 (UUD) need link 1 vertical while links 2–3 hang — but the cart's stabilizing motion shakes the hanging links naturally past 0.6 rad → false-positive fall → -100 penalty → **policy can't learn**. EP0–3 work (link 1 stable when down). EP7 works (all targets at 0). EP4/EP6 stuck at 0%.
+>
+> **Fix:** per-link fall threshold based on target orientation (0.6 rad UP, 1.5 rad DOWN), plus 5× weighting on link 1 in the reward. Validation in progress on a 200K-step EP4-fixed probe pair (`probe_ep4_v1` and `probe_ep4_v2` adding soft-termination). Full M3b retry with the env fix scheduled once probes confirm.
+
+**Cumulative training cost on RunPod so far:** ~$2 USD (M3b cloud + probes). Local CT 1018 free but slow (~12h/2M steps).
 
 ## Tech stack
 
@@ -122,11 +126,78 @@ EP0/EP1 (gravity-assisted) trivial. EP4–EP7 (≥1 link upright) need more step
 |---|---|
 | Simulation | MuJoCo 3.x + Gymnasium |
 | RL algorithm | TQC (Truncated Quantile Critics) via sb3-contrib |
-| Backend | PyTorch (CPU sufficient for these network sizes) |
-| Experiment tracking | MLflow (self-hosted) |
-| Pipeline orchestration | n8n (self-hosted) |
-| Real-time control | ZeroMQ between policy PC and STM32 1 kHz loop |
+| Backend | PyTorch 2.4 (CPU on CT 1018, CUDA 12.4 on RunPod cloud) |
+| Parallel envs | `SubprocVecEnv` with picklable thunks, n_envs=8 default |
+| Experiment tracking | MLflow (self-hosted on CT 1016) |
+| Pipeline orchestration | n8n (self-hosted on CT 1003) |
+| Cloud GPU | RunPod (RTX A5000, $0.27/hr, network volume `tp-data` 50 GB) |
+| Bot interface | Telegram `@TriplePendulumBot` (n8n polling, 11 commands) |
+| Real-time control | ZeroMQ between policy PC and STM32 1 kHz loop (planned, M6+) |
 | Monitoring | Grafana + InfluxDB (planned) |
+
+## Infrastructure
+
+```
+┌────────────┐    n8n webhook     ┌──────────────┐
+│ RunPod pod │  ─────────────►    │   n8n        │
+│ A5000 GPU  │                    │  CT 1003     │ ──► Telegram bot
+└────────────┘                    │              │     @TriplePendulumBot
+       │ logs                     └──────────────┘
+       ▼
+┌────────────┐                    ┌──────────────┐
+│ tp-data    │                    │   MLflow     │
+│ network    │                    │  CT 1016     │
+│ volume     │                    │              │
+└────────────┘                    └──────────────┘
+       ▲
+       │  /workspace
+┌────────────┐
+│ CT 1018    │  pipeline_notifier ► n8n webhook ► launch next stage
+│ launcher   │  (HTTP :8765)
+└────────────┘
+```
+
+- **Local CPU training**: CT 1018 runs the launcher API; n8n triggers stages via the launcher when previous stage finishes.
+- **Cloud GPU training**: RunPod pods clone the repo at boot, run training, push results via webhook. Network volume persists `mlruns/` and `results/` across pods.
+- **Telegram bot**: `/status`, `/runpod`, `/launch m3b|m3c|m4`, `/kill`, `/cost`, `/pod_start`, `/pod_stop confirm` — see [n8n/triple_pendulum_bot.json](n8n/triple_pendulum_bot.json).
+- **Operational doc**: [docs/runbook.md](docs/runbook.md) covers DNS-not-ready, MLflow zombies, secret rotation, cost guards.
+
+## Cloud training (RunPod)
+
+```bash
+# Pre-requisite: RunPod account + network volume "tp-data" + template "tp-train"
+# (see runpod/README.md for full setup)
+
+# Launch via REST API (or use Telegram bot /launch m3b)
+curl -X POST "https://rest.runpod.io/v1/pods" \
+    -H "Authorization: Bearer $RUNPOD_API_KEY" \
+    -H "Content-Type: application/json" \
+    -d '{
+      "name": "tp-m3b",
+      "templateId": "<tp-train template id>",
+      "gpuTypeIds": ["NVIDIA RTX A5000"],
+      "gpuCount": 1,
+      "networkVolumeId": "<tp-data id>",
+      "env": {
+        "TP_AUTO_SHUTDOWN": "1",
+        "TP_STAGE_MODULE": "training.train_m3_all_eps",
+        "TP_STAGE_CONFIG": "training/configs/m3b_all_eps_tqc.yaml",
+        "TELEGRAM_FALLBACK_BOT_TOKEN": "<your bot token>",
+        "TELEGRAM_FALLBACK_CHAT_ID": "<your chat id>"
+      }
+    }'
+```
+
+The pod runs [`scripts/runpod_bootstrap.sh`](scripts/runpod_bootstrap.sh) which:
+1. Waits for DNS, installs OS deps if absent.
+2. Clones the repo at the latest `main` (or `TP_REPO_REF` if pinned).
+3. Pre-installs `blinker` via pip to bypass the apt-distutils conflict.
+4. Installs `requirements.txt` (keeps the image's torch 2.4.1+cu124 to match the host driver).
+5. Spawns an idle watchdog (force-stops the pod after 30 min of GPU<5% — cost guard).
+6. Runs the training stage. On completion, posts results JSON to n8n (with Telegram fallback if the LAN n8n is unreachable from cloud).
+7. Auto-shuts down via the RunPod GraphQL API.
+
+**Typical cost:** $0.27–0.40 per stage on A5000 ($0.30 for M3b 2M steps, $0.50–0.80 for M3c 4M).
 
 ## Repository layout
 
