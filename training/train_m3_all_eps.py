@@ -86,7 +86,7 @@ def per_ep_eval(model, env_cfg: dict, n_per_ep: int = 10) -> dict:
             init_mode=str(cfg.get("init_mode", "near_target")),
             init_noise=float(cfg.get("init_noise", 0.05)),
             max_episode_steps=int(cfg["max_episode_steps"]),
-            fall_grace_steps=int(cfg.get("fall_grace_steps", 0)),
+            fall_grace_steps=0,  # ALWAYS strict in eval — fair comparison across runs
         )
         rewards, lengths = [], []
         for trial in range(n_per_ep):
@@ -157,7 +157,10 @@ def main(cfg_path: str) -> None:
     n_envs = int(cfg.get("n_envs", 1))
 
     train_env = make_vec_env(env_cfg, n_envs=n_envs)
-    eval_env = make_vec_env(env_cfg, n_envs=1)
+    # EvalCallback must use strict termination (fall_grace_steps=0) so the
+    # "best model" checkpoint is selected on the same metric as per_ep_eval.
+    eval_env_cfg = {**env_cfg, "fall_grace_steps": 0}
+    eval_env = make_vec_env(eval_env_cfg, n_envs=1)
 
     tqc_kwargs = dict(cfg["tqc"])
     policy = tqc_kwargs.pop("policy")

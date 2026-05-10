@@ -3,7 +3,7 @@
 # EP4/EP5/EP6/EP7 (links-up configs) need more exploration; buffer size raised
 # to match to avoid overwriting early transitions.
 
-stage: M3b
+stage: M3b_v3
 
 env:
   target_ep: 7              # ignored when target_mode == "random"
