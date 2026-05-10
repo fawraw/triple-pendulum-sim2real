@@ -138,3 +138,144 @@ def test_no_fall_at_target():
     # 0 rad in init (which is target since EP7 is UUU).
     assert not e._is_fallen()
     e.close()
+
+
+# ---------------------------------------------------------------------------
+# Per-link fall threshold (audit 2026-05-10 fix)
+# ---------------------------------------------------------------------------
+
+def test_per_link_threshold_up_is_tight():
+    """Links targeted UP use the tight 0.6 rad threshold."""
+    e = TriplePendulumEnv(target_ep=7, init_mode="near_target",
+                          init_noise=0.0, max_episode_steps=50)
+    e.reset(seed=0)
+    thresholds = e._fall_thresholds()
+    # EP7 = all UP → all thresholds should be FALL_THRESHOLD_UP_RAD
+    import numpy as np
+    np.testing.assert_array_almost_equal(
+        thresholds, [e.FALL_THRESHOLD_UP_RAD] * 3
+    )
+    e.close()
+
+
+def test_per_link_threshold_down_is_loose():
+    """Links targeted DOWN use the loose 1.5 rad threshold."""
+    e = TriplePendulumEnv(target_ep=0, init_mode="near_target",
+                          init_noise=0.0, max_episode_steps=50)
+    e.reset(seed=0)
+    thresholds = e._fall_thresholds()
+    # EP0 = DDD → all DOWN → all should be FALL_THRESHOLD_DOWN_RAD
+    import numpy as np
+    np.testing.assert_array_almost_equal(
+        thresholds, [e.FALL_THRESHOLD_DOWN_RAD] * 3
+    )
+    e.close()
+
+
+def test_ep4_hanging_links_do_not_trigger_fall():
+    """EP4 (UDD): link 1 targeted UP (strict), links 2-3 targeted DOWN (loose).
+    A hanging link swinging 1.0 rad (< 1.5 rad DOWN threshold) must NOT trip.
+    This is the pre-fix bug that caused EP4=0% in M3b."""
+    import mujoco, numpy as np
+    e = TriplePendulumEnv(target_ep=4, init_mode="near_target",
+                          init_noise=0.0, max_episode_steps=50)
+    e.reset(seed=0)
+    # Force link 2 to swing 1.0 rad (well past old 0.6 global threshold,
+    # but below the new DOWN threshold of 1.5 rad).
+    e.data.qpos[2] = 1.0  # relative angle of hinge2 (link 2)
+    mujoco.mj_forward(e.model, e.data)
+    assert not e._is_fallen(), (
+        "Hanging link 2 at 1.0 rad should NOT trigger fall for EP4 "
+        "(target=DOWN, threshold=1.5 rad). Pre-fix bug reproduced."
+    )
+    e.close()
+
+
+def test_fall_grace_steps_delays_termination():
+    """With fall_grace_steps=5, _is_fallen() returns False for the first 5
+    consecutive over-threshold steps and True on the 6th."""
+    import mujoco, numpy as np
+    e = TriplePendulumEnv(target_ep=7, init_mode="near_target",
+                          init_noise=0.0, max_episode_steps=200,
+                          fall_grace_steps=5)
+    e.reset(seed=0)
+    # Force link 1 over the UP threshold (0.6 rad)
+    e.data.qpos[1] = 1.0
+    mujoco.mj_forward(e.model, e.data)
+    for step in range(1, 7):
+        result = e._is_fallen()
+        if step <= 5:
+            assert not result, f"Step {step}: should still be within grace"
+        else:
+            assert result, f"Step {step}: should have fallen (grace exceeded)"
+    e.close()
+
+
+def test_fall_counter_resets_on_recovery():
+    """If a link recovers (goes back under threshold), counter resets and
+    subsequent over-threshold steps restart the grace count."""
+    import mujoco, numpy as np
+    e = TriplePendulumEnv(target_ep=7, init_mode="near_target",
+                          init_noise=0.0, max_episode_steps=200,
+                          fall_grace_steps=5)
+    e.reset(seed=0)
+    # Push link 1 over threshold 4 times
+    e.data.qpos[1] = 1.0
+    mujoco.mj_forward(e.model, e.data)
+    for _ in range(4):
+        e._is_fallen()
+    assert e._fall_counter == 4
+    # Recover — bring back under threshold
+    e.data.qpos[1] = 0.0
+    mujoco.mj_forward(e.model, e.data)
+    e._is_fallen()
+    assert e._fall_counter == 0, "Counter must reset when under threshold"
+    e.close()
+
+
+def test_reset_clears_fall_counter():
+    """env.reset() must zero out _fall_counter."""
+    import mujoco, numpy as np
+    e = TriplePendulumEnv(target_ep=7, init_mode="near_target",
+                          init_noise=0.0, max_episode_steps=50,
+                          fall_grace_steps=10)
+    e.reset(seed=0)
+    e.data.qpos[1] = 1.0
+    mujoco.mj_forward(e.model, e.data)
+    for _ in range(5):
+        e._is_fallen()
+    assert e._fall_counter == 5
+    e.reset(seed=1)
+    assert e._fall_counter == 0, "reset() must clear _fall_counter"
+    e.close()
+
+
+def test_reward_link1_weighted_5x():
+    """Link 1 angular error contributes 5× to ang_cost vs links 2 and 3."""
+    import mujoco, numpy as np
+    # EP7: all targets at 0. Push only link 1 by ε, everything else at 0.
+    e7 = TriplePendulumEnv(target_ep=7, init_mode="near_target",
+                           init_noise=0.0, max_episode_steps=50)
+    e7.reset(seed=0)
+    eps = 0.1
+    # err for link 1 only = ε, links 2-3 = 0 → ang_cost = 5*eps²
+    e7.data.qpos[1] = eps
+    e7.data.qpos[2] = 0.0
+    e7.data.qpos[3] = 0.0
+    mujoco.mj_forward(e7.model, e7.data)
+    r1 = e7._reward(fallen=False)
+
+    # Now push only link 2 by ε → ang_cost = 1*eps² (weight=1)
+    e7.reset(seed=0)
+    e7.data.qpos[1] = 0.0
+    e7.data.qpos[2] = eps
+    e7.data.qpos[3] = 0.0
+    mujoco.mj_forward(e7.model, e7.data)
+    r2 = e7._reward(fallen=False)
+    e7.close()
+
+    # |r1| should be ~5× |r2| (link 1 weighted 5×)
+    # Exact: r1 ≈ -(5*eps² + vel_cost + cart_cost), r2 ≈ -(1*eps² + ...)
+    assert abs(r1) > abs(r2) * 4, (
+        f"Link 1 reward contribution should be ~5× link 2; got r1={r1:.4f} r2={r2:.4f}"
+    )

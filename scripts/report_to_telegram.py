@@ -69,19 +69,23 @@ def collect_results() -> list[dict]:
 
 
 def collect_done_blocks() -> list[str]:
-    """Find each 'DONE in ... Eval / EP0..7 / overall' block in bootstrap.log.
-    Each training run prints one such block at the end."""
+    """Find each 'DONE in ... EP0..7 / overall' block in bootstrap.log.
+    Uses line-anchored multiline matching so two consecutive training blocks
+    don't bleed into each other via the non-greedy .*?"""
     log_path = WORKSPACE / "bootstrap.log"
     if not log_path.exists():
         return []
     text = log_path.read_text(errors="replace")
     blocks = []
-    for m in re.finditer(r"(DONE in [\d\.]+s\..*?(?:overall .*|EP7.*succ=[\d\.]+))",
-                         text, flags=re.DOTALL):
-        block = m.group(1)
-        # Trim long blocks
-        if len(block) > 700:
-            block = block[:700] + "..."
+    # Collect lines from each "DONE in X s." until the next "DONE in" or EOF.
+    segments = re.split(r"(?=^DONE in [\d\.]+s\.)", text, flags=re.MULTILINE)
+    for seg in segments:
+        if not seg.startswith("DONE in"):
+            continue
+        # Truncate at first occurrence of a new top-level log section marker
+        block = seg[:800].rstrip()
+        if len(seg) > 800:
+            block += "..."
         blocks.append(block)
     return blocks
 
