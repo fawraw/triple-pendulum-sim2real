@@ -11,6 +11,8 @@ env:
   max_episode_steps: 1000
   init_mode: near_target
   init_noise: 0.05
+  fall_grace_steps: 20      # soft termination: tolerate 20 consec over-threshold
+                            # steps (~40ms at 50Hz) before killing episode
 
 algo: TQC
 total_timesteps: 2_000_000

@@ -86,6 +86,7 @@ def per_ep_eval(model, env_cfg: dict, n_per_ep: int = 10) -> dict:
             init_mode=str(cfg.get("init_mode", "near_target")),
             init_noise=float(cfg.get("init_noise", 0.05)),
             max_episode_steps=int(cfg["max_episode_steps"]),
+            fall_grace_steps=int(cfg.get("fall_grace_steps", 0)),
         )
         rewards, lengths = [], []
         for trial in range(n_per_ep):
