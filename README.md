@@ -55,18 +55,43 @@ For training pipeline details, n8n orchestration, and configs, see the [project 
 
 ## Pipeline architecture
 
-The training stages run unattended on a dedicated host. n8n decides what to do after each stage finishes — advance to the next, retry, or escalate.
+Training stages run unattended. n8n decides advance / retry / escalate. Cloud pods (RunPod) can't reach the LAN n8n, so they fall back to Telegram directly.
+
+```mermaid
+flowchart TB
+    subgraph cloud["☁️ RunPod Cloud (A5000 GPU, $0.27/hr)"]
+        POD["Training pod\ntrain_m3_all_eps.py"]
+        VOL[("tp-data volume\n/workspace")]
+    end
+    subgraph lab["🏠 Lab Perso (LAN 10.1.4.x)"]
+        LAUNCHER["Launcher API\nCT 1018 :8765"]
+        N8N["n8n orchestrator\nCT 1003"]
+        MLFLOW[("MLflow\nCT 1016 :5000")]
+    end
+    TG["📱 Telegram\n@TriplePendulumBot"]
+    CLI["💻 fetch_results.py\n→ gist → read"]
+
+    POD -->|results JSON| VOL
+    POD -->|"Telegram fallback\n(n8n LAN-only)"| TG
+    N8N -->|POST /launch| LAUNCHER
+    LAUNCHER -->|tmux spawn| POD
+    TG -->|"/launch /kill /status"| N8N
+    CLI -->|"pod reads VOL\n→ GitHub gist"| VOL
+```
+
+### Probe → validate → full run
 
 ```mermaid
 flowchart LR
-    A["Training script<br/>train_m2/m3/m4_*.py"] -->|writes results.json| B[pipeline_notifier.py]
-    B -->|POST webhook| C{{n8n orchestrator}}
-    C -->|"metric &ge; threshold"| D["Launcher API<br/>:8765/launch"]
-    C -->|"metric &lt; threshold"| E["Launcher API<br/>fallback config"]
-    C -->|HUMAN_REVIEW| F[Telegram alert]
-    D -->|tmux new-session| A
-    E -->|tmux new-session| A
-    A -.->|metrics| G[("MLflow<br/>10.1.4.230")]
+    A["New fix\nhypothesis"] --> B["Probe 200K steps\nEP-fixed ~50min\n~$0.22"]
+    B --> C{EP success\n≥ 50%?}
+    C -->|YES ✅| D["Full run 2M steps\n~5h ~$1.50"]
+    C -->|NO ❌| E["Refine or\ndig deeper"]
+    E --> A
+    D --> F["fetch_results.py\n~60s $0.01"]
+    F --> G{overall\n≥ 75%?}
+    G -->|YES| H["M4 transitions"]
+    G -->|NO| I["M3c 4M steps\n[512,512]"]
 ```
 
 | Stage | Pass criterion | On pass | On fail |
@@ -74,9 +99,9 @@ flowchart LR
 | M2 | `ep7_success_rate ≥ 0.80` | M3b | HUMAN_REVIEW |
 | M3b | `overall_success_rate ≥ 0.75` | M4 | M3c |
 | M3c | `overall_success_rate ≥ 0.75` | M4 | HUMAN_REVIEW |
-| M4 | `overall_success_rate ≥ 0.80` (over 56 transitions) | HUMAN_REVIEW (M5) | HUMAN_REVIEW |
+| M4 | `overall_success_rate ≥ 0.80` (56 transitions) | M5 | HUMAN_REVIEW |
 
-See [n8n-Orchestration](https://github.com/fawraw/triple-pendulum-sim2real/wiki/n8n-Orchestration) and [Training-Pipeline](https://github.com/fawraw/triple-pendulum-sim2real/wiki/Training-Pipeline) for the full configuration.
+See [n8n-Orchestration](https://github.com/fawraw/triple-pendulum-sim2real/wiki/n8n-Orchestration) and [Training-Pipeline](https://github.com/fawraw/triple-pendulum-sim2real/wiki/Training-Pipeline) for the full config.
 
 ## Status
 
@@ -85,7 +110,7 @@ See [n8n-Orchestration](https://github.com/fawraw/triple-pendulum-sim2real/wiki/
 | 0. Literature gap confirmed | ✅ | 2026-05-08 |
 | 1. MuJoCo model, 3 links on cart | ✅ | 2026-05-08 |
 | 2. Stabilize UUU in sim (TQC) | 🟡 partial | 2026-05-08 |
-| 3. All 8 EPs stabilized in sim | 🟡 M3b-v2 training (env fixes: per-link threshold + grace + reward, ETA ~1h) | 2026-05-10 |
+| 3. All 8 EPs stabilized in sim | 🟡 M3b-v3 training (adaptive reward fix, ETA ~5h, ~$1.50) | 2026-05-10 |
 | 4. 56 transitions in sim | ⬜ scaffolded | |
 | 5. Domain randomization | ⬜ | |
 | 6. Hardware v1 assembled | ⬜ | |
@@ -116,17 +141,46 @@ See [n8n-Orchestration](https://github.com/fawraw/triple-pendulum-sim2real/wiki/
 
 > **Diagnosis (audit 2026-05-10):** the plateau is **structural, not capacity-bound**. The env's `_is_fallen()` used a single 0.6 rad threshold for all 3 links. EP4 (UDD) and EP6 (UUD) need link 1 vertical while links 2–3 hang — but the cart's stabilizing motion shakes the hanging links naturally past 0.6 rad → false-positive fall → -100 penalty → **policy can't learn**. EP0–3 work (link 1 stable when down). EP7 works (all targets at 0). EP4/EP6 stuck at 0%.
 >
-> **Fixes applied (`sim/envs/triple_pendulum_env.py`):**
-> - Per-link fall threshold: 0.6 rad for links targeted UP, 1.5 rad for links targeted DOWN
-> - `fall_grace_steps=20` in training config: 20 consecutive over-threshold steps before termination (~40ms grace period)
-> - Reward: `ang_cost = 5*err[0]² + err[1]² + err[2]²` (link 1 weighted 5×)
-> - `vel_cost` coefficient: 0.01 → 0.05
+> **Two bugs found and fixed (2026-05-10):**
 >
-> **M3b-v2** (2M steps, all fixes, gradient_steps=8, n_envs=8) launched on RunPod A5000. ~$1.50 total; ETA ~1h remaining as of 2026-05-10 ~17h CET.
+> **Bug 1 — False-positive fall detection:** `_is_fallen()` used a single 0.6 rad threshold for all links. When the DOWN-targeted links swing past 34° (natural physics), the env killed the episode with -100 penalty. Policy learned to do nothing.
 >
-> *Note on link numbering:* the config label "UDD" uses Top→Bottom convention (U = top link up); the code uses bit 0 = link 1 = cart-attached (bottom) link. Both systems are internally consistent.
+> ```
+> BEFORE: any link > 0.6 rad  →  fall  →  -100
+> AFTER:  UP-targeted link > 0.6 rad  →  fall  →  -100
+>         DOWN-targeted link > 1.5 rad →  fall  →  -100  (much looser)
+> ```
+>
+> **Bug 2 — Wrong reward focus:** reward always penalised link 1 (base/cart) 5× regardless of target. For EP4 (base DOWN, tip UP), the policy should focus on the tip — but the reward kept demanding perfect control of the hanging base.
+>
+> ```
+> BEFORE:  5×err[0]² + 1×err[1]² + 1×err[2]²   (always base 5×)
+> AFTER:   w[0]×err[0]² + w[1]×err[1]² + w[2]²  where w[i]=5 if link i is UP, 1 if DOWN
+> ```
+>
+> **Validation probes** (200K steps EP-fixed, 2026-05-10 evening):
+> - EP4-v3 with adaptive reward: **60%** (was 0% across 3 prior runs) ✅
+> - EP6 with adaptive reward: **10%** (was 0%) — needs more steps
+>
+> **M3b-v3** (2M steps, adaptive reward, eval strict, `stage=M3b_v3`) launched on RunPod A5000, ETA ~5h.
 
-**Cumulative training cost on RunPod so far:** ~$4 USD (M3b cloud + probes + M3b-v2). Local CT 1018 free but slow (~12h/2M steps).
+### M3 debugging journey
+
+```
+Run              Steps  Overall  EP4   EP6   Notes
+─────────────────────────────────────────────────────────────────────
+M3 baseline      400K   42.5%    0%    0%    First attempt
+M3b CPU          2M     67.5%    0%    0%    More steps, same plateau
+M3b GPU          2M     68.0%    0%    0%    GPU (8×faster), same plateau
+M3b-v2           2M     61.3%    0%    0%    Per-link fix, eval not strict → worse
+Probe EP4-v3     200K   n/a      60%   n/a   ← adaptive reward fix validated!
+Probe EP6        200K   n/a      n/a   10%   ← non-zero first time
+M3b-v3 (now)    2M     ~78%?    ?     ?     All fixes, eval strict, running
+```
+
+**Cumulative training cost on RunPod:** ~$6 USD total (M3b + probes + M3b-v2 + M3b-v3). CT 1018 free.
+
+*Note on link numbering:* config labels like "UDD" read Top→Bottom (U=tip up, D=middle down, D=base down); code uses bit 0 = link 1 = base (cart-attached). Both are internally consistent — see [[System-Explained]] for details.
 
 ## Tech stack
 

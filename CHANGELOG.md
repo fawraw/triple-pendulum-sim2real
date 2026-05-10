@@ -103,7 +103,22 @@ Confirmed by data: across two M3b runs (CPU `gradient_steps=1` and GPU `gradient
 - `~/.claude/skills/mlflow/` — MLflow queries (list runs + ETA, per-EP success, cleanup zombies).
 - `~/.claude/skills/triple-pendulum/` — Project-specific ops (launch stages, baseline table, bot commands, architecture).
 
-Total commits today: ~35. See `git log --since=2026-05-09` for the full list.
+### Evening session (2026-05-10)
+
+- **Adaptive reward weighting** — the morning fix weighted `5×err[0]²` (link 1/base, always). For EP4 (base DOWN, tip UP), this incentivised controlling the hanging base instead of the inverted tip. Fix: `weights = where(target≈0, 5.0, 1.0); ang_cost = sum(weights * err²)`. UP-targeted links get 5×, DOWN-targeted get 1×. See commit `620994c`.
+- **Pre-M3b-v3 audit fixes** (commit `05b57b7`):
+  - `per_ep_eval()` hardcoded `fall_grace_steps=0` (was inheriting 20 from config → eval not strict)
+  - `EvalCallback` uses `eval_env_cfg = {**env_cfg, "fall_grace_steps": 0}`
+  - `stage: M3b → M3b_v3` for clean MLflow tracking
+- **Probe EP4-v3** (adaptive reward): EP4 **60%** ← breakthrough from persistent 0%
+- **Probe EP6** (adaptive reward): EP6 **10%** ← first non-zero
+- **M3b-v3 launched** on RunPod A5000 (pod `1d38awsk08hzdj`), commit pinned `1f67901`. Expected overall ~78-82%.
+- **`scripts/fetch_results.py`** — automates gist-based result read: spawn pod → read volume → update gist → read → delete. `python3 scripts/fetch_results.py --milestone M3b_v3`
+- **Skills** — `training-analyst` (new), `triple-pendulum` (CI check + probe workflow), `runpod`/`mlflow` already complete
+- **Wiki** — `System-Explained.md` (new, accessible guide), `Simulation-Model.md` enriched (EP difficulty table with ⭐, reward function table, before/after fix docs)
+- **README** — M3 debugging journey table, dual Mermaid diagrams (infrastructure + probe→validate→launch workflow)
+
+Total commits today: ~40. See `git log --since=2026-05-09` for the full list.
 
 ### Known gaps (carried over)
 
