@@ -1,0 +1,43 @@
+# Probe v2: same as probe_ep4 + soft termination (fall_grace_steps=20).
+# Tests audit recommendation #2 — instead of failing on 1 over-threshold step,
+# tolerate 20 consecutive (~40ms at 50Hz) before terminating. Eval remains
+# strict (fall_grace_steps=0) for a fair scoring vs probe v1.
+
+stage: PROBE_EP4_V2
+
+env:
+  target_ep: 4
+  target_mode: fixed
+  max_episode_steps: 1000
+  init_mode: near_target
+  init_noise: 0.05
+  fall_grace_steps: 20      # NEW — soft termination during training only
+
+algo: TQC
+total_timesteps: 200_000
+n_envs: 8
+
+tqc:
+  policy: MlpPolicy
+  learning_rate: 3.0e-4
+  buffer_size: 200_000
+  batch_size: 512
+  tau: 0.005
+  gamma: 0.99
+  train_freq: 1
+  gradient_steps: 8
+  top_quantiles_to_drop_per_net: 2
+  policy_kwargs:
+    net_arch: [256, 256]
+    n_critics: 3
+    n_quantiles: 25
+
+callbacks:
+  rollout_log_freq: 5_000
+  checkpoint_freq:  50_000
+
+eval:
+  freq: 25_000
+  n_episodes: 10
+  deterministic: true
+  final_n_episodes: 80

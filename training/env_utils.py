@@ -27,6 +27,7 @@ def _make_one_env(env_cfg: dict) -> Monitor:
         init_mode=str(env_cfg.get("init_mode", "near_target")),
         init_noise=float(env_cfg.get("init_noise", 0.05)),
         max_episode_steps=int(env_cfg["max_episode_steps"]),
+        fall_grace_steps=int(env_cfg.get("fall_grace_steps", 0)),
     )
     return Monitor(env)
 

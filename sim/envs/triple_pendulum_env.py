@@ -39,7 +39,8 @@ class TriplePendulumEnv(gym.Env):
     def __init__(self, target_ep: int = 7, render_mode: str | None = None,
                  max_episode_steps: int = 1500,
                  init_mode: str = "near_target", init_noise: float = 0.05,
-                 target_mode: str = "fixed"):
+                 target_mode: str = "fixed",
+                 fall_grace_steps: int = 0):
         """
         init_mode:
           - "near_target": start with link angles within `init_noise` of the target EP.
@@ -64,6 +65,11 @@ class TriplePendulumEnv(gym.Env):
         self.init_mode = init_mode
         self.init_noise = float(init_noise)
         self.target_mode = str(target_mode)
+        # Soft-termination: tolerate N consecutive steps over the per-link
+        # threshold before triggering a fall. 0 = strict (legacy). 20 ~= 40ms
+        # at 50Hz, gives the policy time to react before episode is killed.
+        self.fall_grace_steps = int(fall_grace_steps)
+        self._fall_counter = 0
         self._step_count = 0
         self.render_mode = render_mode
         self._renderer = None
@@ -129,8 +135,15 @@ class TriplePendulumEnv(gym.Env):
             return True
         if self.init_mode == "near_target":
             err = self._angle_error()
-            if np.any(np.abs(err) > self._fall_thresholds()):
-                return True
+            over = bool(np.any(np.abs(err) > self._fall_thresholds()))
+            if over:
+                self._fall_counter += 1
+                # Strict mode (grace=0): fall on first step over threshold.
+                # Soft mode (grace>0): only fall after N consecutive over-threshold steps.
+                if self._fall_counter > self.fall_grace_steps:
+                    return True
+            else:
+                self._fall_counter = 0
         return False
 
     def _reward(self, fallen: bool) -> float:
@@ -185,6 +198,7 @@ class TriplePendulumEnv(gym.Env):
         self.data.qpos[3] = (t3 - t2) + self.np_random.uniform(-n, n)
         self.data.qvel[:] = self.np_random.uniform(-0.01, 0.01, size=self.model.nv)
         self._step_count = 0
+        self._fall_counter = 0
         mujoco.mj_forward(self.model, self.data)
         return self._obs(), {}
 
