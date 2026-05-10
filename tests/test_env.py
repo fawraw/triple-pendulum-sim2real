@@ -181,18 +181,24 @@ def test_ep4_hanging_links_do_not_trigger_fall():
     e = TriplePendulumEnv(target_ep=4, init_mode="near_target",
                           init_noise=0.0, max_episode_steps=50)
     e.reset(seed=0)
-    # qpos[2] is the RELATIVE angle of hinge2 (link 2 relative to link 1).
-    # After reset: qpos[1]≈0 (link 1 UP), qpos[2]≈π (link 2 DOWN relative).
-    # Absolute θ₂ = qpos[1]+qpos[2]. Target θ₂ = π.
-    # To get |err|=1.0: abs_θ₂ = π-1.0 → qpos[2] = (π-1.0) - qpos[1] ≈ π-1.0
-    e.data.qpos[2] = np.pi - 1.0  # abs_θ₂ = 0 + (π-1.0) → err = (π-1.0)-π = -1.0
+    # EP4 targets = ep_target_angles(4) = [π, π, 0]:
+    #   bit 0 of 4 = 0 → link 1 DOWN → θ₁_target = π
+    #   bit 1 of 4 = 0 → link 2 DOWN → θ₂_target = π
+    #   bit 2 of 4 = 1 → link 3 UP   → θ₃_target = 0
+    # After near_target reset (noise=0): qpos[1]=π, qpos[2]=0, qpos[3]=-π
+    # (qpos[i] are RELATIVE angles: qpos[2] = t2-t1 = π-π = 0)
+    # abs_θ₂ = qpos[1] + qpos[2] = π + 0 = π → err[1] = 0
+    #
+    # To give link 2 an error of 1.0 rad: abs_θ₂ = π-1.0
+    # → qpos[2] = abs_θ₂ - qpos[1] = (π-1.0) - π = -1.0
+    e.data.qpos[2] = -1.0  # abs_θ₂ = π + (-1.0) = π-1.0 → err[1] = -1.0
     mujoco.mj_forward(e.model, e.data)
     err = e._angle_error()
-    assert abs(err[1]) < 1.1, f"Expected |err[1]|≈1.0, got {err[1]:.3f}"
+    assert abs(abs(err[1]) - 1.0) < 0.05, f"Expected |err[1]|≈1.0, got {err[1]:.3f}"
     assert not e._is_fallen(), (
-        f"Hanging link 2 at 1.0 rad error (< 1.5 rad DOWN threshold) should NOT "
-        f"trigger fall for EP4. err={err}. Pre-fix (global 0.6 threshold) would "
-        f"have triggered this."
+        f"Link 2 at 1.0 rad error from DOWN target should NOT trigger fall "
+        f"(DOWN threshold=1.5 rad). err={np.round(err,3)}. "
+        f"Old global 0.6 threshold would have triggered this (pre-fix bug)."
     )
     e.close()
 
