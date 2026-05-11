@@ -1,0 +1,43 @@
+# Pod B: EP4/EP6 oversampling ×3 (weighted target mode)
+# Hypothesis: EP4/EP6 only get 12.5% of training in random mode (~250K steps).
+# Probe EP4-fixed at 200K → 60%. Full run starves them. 3× oversample → ~30%.
+# Expected: EP4/EP6 break 0%, easy EPs stable.
+stage: M3b_v4B
+
+env:
+  target_ep: 7
+  target_mode: weighted    # EP4 and EP6 get hard_ep_weight× more episodes
+  hard_ep_weight: 3.0      # EP4/EP6: 3× → ~30% each instead of 12.5%
+  max_episode_steps: 1000
+  init_mode: near_target
+  init_noise: 0.05
+  fall_grace_steps: 20
+
+algo: TQC
+total_timesteps: 2_000_000
+n_envs: 8
+
+tqc:
+  policy: MlpPolicy
+  learning_rate: 3.0e-4
+  buffer_size: 1_000_000
+  batch_size: 512
+  tau: 0.005
+  gamma: 0.99
+  train_freq: 1
+  gradient_steps: 8
+  top_quantiles_to_drop_per_net: 2
+  policy_kwargs:
+    net_arch: [256, 256]
+    n_critics: 3
+    n_quantiles: 25
+
+callbacks:
+  rollout_log_freq: 10_000
+  checkpoint_freq: 200_000
+
+eval:
+  freq: 50_000
+  n_episodes: 32
+  deterministic: true
+  final_n_episodes: 80

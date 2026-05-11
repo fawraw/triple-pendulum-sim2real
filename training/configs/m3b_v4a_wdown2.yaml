@@ -1,0 +1,43 @@
+# Pod A: w_down=2 (partial adaptive reward)
+# Hypothesis: EP2 regression (100→40%) caused by removing base stability prior.
+# w_down=2 keeps a softer prior without re-introducing the EP4 inversion bug.
+# Expected: EP2 back to ≥70%, EP4/EP6 unchanged (different mechanism).
+stage: M3b_v4A
+
+env:
+  target_ep: 7
+  target_mode: random
+  max_episode_steps: 1000
+  init_mode: near_target
+  init_noise: 0.05
+  fall_grace_steps: 20
+  w_down: 2.0          # DOWN links get 2× instead of 1× (was 5× uniform before)
+
+algo: TQC
+total_timesteps: 2_000_000
+n_envs: 8
+
+tqc:
+  policy: MlpPolicy
+  learning_rate: 3.0e-4
+  buffer_size: 1_000_000
+  batch_size: 512
+  tau: 0.005
+  gamma: 0.99
+  train_freq: 1
+  gradient_steps: 8
+  top_quantiles_to_drop_per_net: 2
+  policy_kwargs:
+    net_arch: [256, 256]
+    n_critics: 3
+    n_quantiles: 25
+
+callbacks:
+  rollout_log_freq: 10_000
+  checkpoint_freq: 200_000
+
+eval:
+  freq: 50_000
+  n_episodes: 32
+  deterministic: true
+  final_n_episodes: 80

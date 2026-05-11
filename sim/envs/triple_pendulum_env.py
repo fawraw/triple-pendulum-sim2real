@@ -40,7 +40,12 @@ class TriplePendulumEnv(gym.Env):
                  max_episode_steps: int = 1500,
                  init_mode: str = "near_target", init_noise: float = 0.05,
                  target_mode: str = "fixed",
-                 fall_grace_steps: int = 0):
+                 fall_grace_steps: int = 0,
+                 hard_ep_weight: float = 1.0,
+                 start_grace_steps: int = 0,
+                 w_down: float = 1.0,
+                 progress_reward_coef: float = 0.0,
+                 vel_cost_coef: float = 0.05):
         """
         init_mode:
           - "near_target": start with link angles within `init_noise` of the target EP.
@@ -50,11 +55,10 @@ class TriplePendulumEnv(gym.Env):
           - "random":      start with all link angles uniformly in [-pi, pi].
             Use this once the policy is robust enough.
         target_mode:
-          - "fixed":  target_ep stays at the value passed to __init__. Use for
-            single-equilibrium milestones (M2).
-          - "random": target_ep is resampled uniformly in 0..7 on every reset.
-            Use for the conditional milestone (M3) and beyond, so the policy
-            learns to read the target one-hot in its observation.
+          - "fixed":    target_ep stays constant.
+          - "random":   target_ep resampled uniformly 0..7 on every reset.
+          - "weighted": like random but EP4/EP6 get extra_weight× more episodes.
+            Configure via target_ep_weights env param or hard-coded in env_utils.
         init_noise: scale of the uniform noise applied to qpos/qvel at reset (rad / rad/s).
         """
         super().__init__()
@@ -65,12 +69,18 @@ class TriplePendulumEnv(gym.Env):
         self.init_mode = init_mode
         self.init_noise = float(init_noise)
         self.target_mode = str(target_mode)
-        # Soft-termination: tolerate N consecutive steps over the per-link
-        # threshold before triggering a fall. 0 = strict (legacy). 20 ~= 40ms
-        # at 50Hz, gives the policy time to react before episode is killed.
         self.fall_grace_steps = int(fall_grace_steps)
+        # start_grace_steps: first N steps are immune to falls (policy orients itself)
+        self.start_grace_steps = int(start_grace_steps)
+        # hard_ep_weight: EP4 and EP6 get this multiplier in "weighted" target_mode
+        self.hard_ep_weight = float(hard_ep_weight)
+        # Reward coefficients (configurable per pod)
+        self.w_down = float(w_down)
+        self.progress_reward_coef = float(progress_reward_coef)
+        self.vel_cost_coef = float(vel_cost_coef)
         self._fall_counter = 0
         self._step_count = 0
+        self._prev_err: np.ndarray | None = None
         self.render_mode = render_mode
         self._renderer = None
 
@@ -133,13 +143,14 @@ class TriplePendulumEnv(gym.Env):
     def _is_fallen(self) -> bool:
         if abs(self.data.qpos[0]) > 0.95:
             return True
+        # Immunity window at episode start — gives the policy time to orient
+        if self._step_count < self.start_grace_steps:
+            return False
         if self.init_mode == "near_target":
             err = self._angle_error()
             over = bool(np.any(np.abs(err) > self._fall_thresholds()))
             if over:
                 self._fall_counter += 1
-                # Strict mode (grace=0): fall on first step over threshold.
-                # Soft mode (grace>0): only fall after N consecutive over-threshold steps.
                 if self._fall_counter > self.fall_grace_steps:
                     return True
             else:
@@ -157,14 +168,20 @@ class TriplePendulumEnv(gym.Env):
         # intended gradient. The adaptive version weights each link correctly
         # based on its target orientation.
         target = ep_target_angles(self.target_ep)
-        weights = np.where(np.isclose(target, 0.0), 5.0, 1.0)
+        # Adaptive weighting: UP-targeted links get 5×, DOWN links get w_down×
+        weights = np.where(np.isclose(target, 0.0), 5.0, self.w_down)
         ang_cost = float(np.sum(weights * err ** 2))
-        # Bumped 0.01 -> 0.05 to discourage flailing on hard EPs.
-        vel_cost = 0.05 * float(st[3] ** 2 + st[5] ** 2 + st[7] ** 2)
+        vel_cost = self.vel_cost_coef * float(st[3] ** 2 + st[5] ** 2 + st[7] ** 2)
         cart_cost = 0.1 * float(st[0] ** 2)
         u = float(self.data.ctrl[0])
         ctrl_cost = 0.001 * u ** 2
         r = -(ang_cost + vel_cost + cart_cost + ctrl_cost)
+        # Progress reward: dense bonus for reducing weighted error each step.
+        # Provides gradient even in episodes that ultimately fail.
+        if self.progress_reward_coef > 0.0 and self._prev_err is not None:
+            progress = float(np.sum(weights * (self._prev_err ** 2 - err ** 2)))
+            r += self.progress_reward_coef * progress
+        self._prev_err = err.copy()
         if fallen:
             r -= self.FALL_PENALTY
         return r
@@ -180,6 +197,13 @@ class TriplePendulumEnv(gym.Env):
             self.target_ep = int(options["target_ep"])
         elif self.target_mode == "random":
             self.target_ep = int(self.np_random.integers(0, 8))
+        elif self.target_mode == "weighted":
+            # Hard EPs (4, 6) get hard_ep_weight× more training exposure.
+            w = np.ones(8)
+            w[4] = self.hard_ep_weight
+            w[6] = self.hard_ep_weight
+            p = w / w.sum()
+            self.target_ep = int(self.np_random.choice(8, p=p))
         if options and "init_mode" in options:
             self.init_mode = str(options["init_mode"])
 
@@ -204,7 +228,9 @@ class TriplePendulumEnv(gym.Env):
         self.data.qvel[:] = self.np_random.uniform(-0.01, 0.01, size=self.model.nv)
         self._step_count = 0
         self._fall_counter = 0
+        self._prev_err = None
         mujoco.mj_forward(self.model, self.data)
+        self._prev_err = self._angle_error()
         return self._obs(), {}
 
     def step(self, action):

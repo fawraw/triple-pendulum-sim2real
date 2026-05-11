@@ -28,6 +28,11 @@ def _make_one_env(env_cfg: dict) -> Monitor:
         init_noise=float(env_cfg.get("init_noise", 0.05)),
         max_episode_steps=int(env_cfg["max_episode_steps"]),
         fall_grace_steps=int(env_cfg.get("fall_grace_steps", 0)),
+        start_grace_steps=int(env_cfg.get("start_grace_steps", 0)),
+        hard_ep_weight=float(env_cfg.get("hard_ep_weight", 1.0)),
+        w_down=float(env_cfg.get("w_down", 1.0)),
+        progress_reward_coef=float(env_cfg.get("progress_reward_coef", 0.0)),
+        vel_cost_coef=float(env_cfg.get("vel_cost_coef", 0.05)),
     )
     return Monitor(env)
 

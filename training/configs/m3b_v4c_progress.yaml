@@ -1,0 +1,45 @@
+# Pod C: Progress reward + episode start grace (external proposal, adapted)
+# Hypothesis: No dense gradient for EP4/EP6 in failed episodes.
+# Progress reward gives +reward for reducing weighted error each step.
+# start_grace_steps=100 prevents kills in first 2s (policy orients itself).
+# NOTE: init_mode=near_target kept (not random — too hard for M3).
+stage: M3b_v4C
+
+env:
+  target_ep: 7
+  target_mode: random
+  max_episode_steps: 1000
+  init_mode: near_target
+  init_noise: 0.05
+  fall_grace_steps: 50         # 1 second tolerance (was 20=0.4s)
+  start_grace_steps: 100       # First 2s: no fall detection (policy orients)
+  progress_reward_coef: 0.5    # reward += 0.5 * sum(w*(prev_err²-err²))
+
+algo: TQC
+total_timesteps: 2_000_000
+n_envs: 8
+
+tqc:
+  policy: MlpPolicy
+  learning_rate: 3.0e-4
+  buffer_size: 1_000_000
+  batch_size: 512
+  tau: 0.005
+  gamma: 0.99
+  train_freq: 1
+  gradient_steps: 8
+  top_quantiles_to_drop_per_net: 2
+  policy_kwargs:
+    net_arch: [256, 256]
+    n_critics: 3
+    n_quantiles: 25
+
+callbacks:
+  rollout_log_freq: 10_000
+  checkpoint_freq: 200_000
+
+eval:
+  freq: 50_000
+  n_episodes: 32
+  deterministic: true
+  final_n_episodes: 80
