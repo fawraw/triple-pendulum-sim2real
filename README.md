@@ -110,7 +110,7 @@ See [n8n-Orchestration](https://github.com/fawraw/triple-pendulum-sim2real/wiki/
 | 0. Literature gap confirmed | ✅ | 2026-05-08 |
 | 1. MuJoCo model, 3 links on cart | ✅ | 2026-05-08 |
 | 2. Stabilize UUU in sim (TQC) | 🟡 partial | 2026-05-08 |
-| 3. All 8 EPs stabilized in sim | 🟡 M3b-v3 training (adaptive reward fix, ETA ~5h, ~$1.50) | 2026-05-10 |
+| 3. All 8 EPs stabilized in sim | 🟡 **8 pods parallel** (M3b-v4 A–H, multiple strategies, ETA ~15h CET) | 2026-05-11 |
 | 4. 56 transitions in sim | ⬜ scaffolded | |
 | 5. Domain randomization | ⬜ | |
 | 6. Hardware v1 assembled | ⬜ | |
@@ -175,10 +175,26 @@ M3b GPU          2M     68.0%    0%    0%    GPU (8×faster), same plateau
 M3b-v2           2M     61.3%    0%    0%    Per-link fix, eval not strict → worse
 Probe EP4-v3     200K   n/a      60%   n/a   ← adaptive reward fix validated!
 Probe EP6        200K   n/a      n/a   10%   ← non-zero first time
-M3b-v3 (now)    2M     ~78%?    ?     ?     All fixes, eval strict, running
+M3b-v3          2M      60%     0%    0%    EP2 regression, EP4/EP6 still 0%
+M3b-v4 A–H     2M×7    TBD     TBD   TBD   8 parallel pods, ETA ~15h CET
 ```
 
-**Cumulative training cost on RunPod:** ~$6 USD total (M3b + probes + M3b-v2 + M3b-v3). CT 1018 free.
+**M3b-v3 post-mortem:** Adaptive reward (UP=5, DOWN=1) introduced a new regression — EP2 dropped from 100% to 40% because removing the base-stability prior (`w_down=1`) hurt EPs where the base links correlate with upper-link stability. EP4/EP6 remain at 0% — the probe showed 60% with fixed-EP training but the full run allocates only 12.5% training time per EP.
+
+**8 parallel pods (M3b-v4) running as of 2026-05-11:**
+
+| Pod | Key changes | Hypothesis |
+|---|---|---|
+| A | `w_down=2` | EP2 regression: base prior too weak |
+| B | Oversample EP4/EP6 ×3 | EP4/EP6: too little training time |
+| C | Progress reward + grace | EP4/EP6: no dense gradient in failed episodes |
+| D | M3c [512,512] 4M steps | Null: is it a capacity problem? |
+| E | **A+B** | Combo of two best individual fixes |
+| **F** | **A+B+C (full)** | Kitchen sink — highest chance of passing 75% |
+| G | Oversample ×5 + A + C | More aggressive if ×3 isn't enough |
+| H | A + C + `vel_cost=0.01` | Restore old vel_cost — tests EP7 regression cause |
+
+**Cumulative training cost on RunPod:** ~$14 USD total (all runs + 8 new pods). CT 1018 free.
 
 *Note on link numbering:* config labels like "UDD" read Top→Bottom (U=tip up, D=middle down, D=base down); code uses bit 0 = link 1 = base (cart-attached). Both are internally consistent — see [[System-Explained]] for details.
 

@@ -120,6 +120,63 @@ Confirmed by data: across two M3b runs (CPU `gradient_steps=1` and GPU `gradient
 
 Total commits today: ~40. See `git log --since=2026-05-09` for the full list.
 
+---
+
+## 2026-05-11 — M3b-v3 post-mortem + 8-pod parallel experiment
+
+### M3b-v3 results (60% overall — failed acceptance)
+
+| EP | Config | M3b-v3 | Delta vs M3b GPU |
+|---|---|---|---|
+| EP0 | DDD | 100% | = |
+| EP1 | UDD | 100% | = |
+| EP2 | DUD | **40%** | ▼ from 100% |
+| EP3 | UUD | 100% | = |
+| EP4 | DDU | **0%** | = (still stuck) |
+| EP5 | UDU | 80% | ▲ from 60% |
+| EP6 | DUU | **0%** | = (still stuck) |
+| EP7 | UUU | **60%** | ▼ from 80% |
+
+**Three new regressions diagnosed:**
+
+1. **EP2 100%→40%** — adaptive reward `w_down=1` removed the base-stability prior. Old `5×err[base]²` accidentally helped EPs where base stability correlates with upper-link stability. Fix candidate: `w_down=2`.
+
+2. **EP4/EP6 still 0%** — adaptive reward fixes the gradient direction but EP4/EP6 only get 12.5% of random-mode training (~250K steps). Not enough. Probe (EP-fixed, 100% exposure) showed EP4=60%. Fix: oversample EP4/EP6.
+
+3. **EP7 80%→60%** — hypothesis: `vel_cost=0.05` (bumped from 0.01) over-damps all-UP configurations that need aggressive corrections. Fix candidate: restore 0.01 or make adaptive.
+
+### 8 parallel pods launched (M3b-v4)
+
+To resolve the regressions efficiently, 8 pods run simultaneously — each testing one hypothesis or combination, all 2M steps (~$1.35 each), ETA ~15h CET.
+
+| Pod | Stage | Key fix | What it tests |
+|---|---|---|---|
+| A | M3b_v4A | `w_down=2` | EP2 regression |
+| B | M3b_v4B | Oversample EP4/EP6 ×3 | EP4/EP6 exposure |
+| C | M3b_v4C | Progress reward + grace | Dense gradient for failed episodes |
+| D | M3b_v4C | M3c 4M [512,512] | Capacity null hypothesis |
+| E | M3b_v4E | A+B | Combo of two best fixes |
+| **F** | **M3b_v4F** | **A+B+C (full combo)** | Kitchen sink — most likely to pass 75% |
+| G | M3b_v4G | Oversample ×5 + A + C | More aggressive if ×3 insufficient |
+| H | M3b_v4H | A + C + vel_cost=0.01 | EP7 regression + EP2 + dense gradient |
+
+### New env capabilities added
+
+- `target_mode="weighted"` — EP4/EP6 get `hard_ep_weight×` probability in reset
+- `start_grace_steps` — first N steps immune to fall detection (policy orients)
+- `hard_ep_weight` — multiplier for hard EPs in weighted mode
+- `w_down` — configurable weight for DOWN-targeted links in ang_cost
+- `progress_reward_coef` — dense shaping: `+coef × sum(w × (prev_err² − err²))`
+- `vel_cost_coef` — configurable velocity penalty coefficient
+
+### Tools added
+
+- `scripts/fetch_results.py` — reads RunPod network volume via GitHub gist (~60s, ~$0.01)
+- `scripts/report_to_telegram.py` — IT-friendly result report (bars, EP labels, verdict)
+- `~/.claude/skills/training-analyst` — RL result interpretation skill
+- `~/.claude/skills/triple-pendulum` — updated with CI check + probe workflow
+- `~/.claude/skills/runpod` — RunPod pod management
+
 ### Known gaps (carried over)
 
 - HTTPS for `n8n.faji.co` (NPM cert) — affects only n8n webhook from cloud and Telegram webhooks
