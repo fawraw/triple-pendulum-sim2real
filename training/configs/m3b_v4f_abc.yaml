@@ -1,0 +1,43 @@
+# Pod F: FULL COMBO — w_down=2 + oversample ×3 + progress reward + grace
+# Kitchen sink of all individual fixes. If this doesn't pass 75%, the problem
+# is structural (need M3c or different architecture).
+# Expected: ≥80% overall, EP4/EP6 ≥60%
+stage: M3b_v4F
+
+env:
+  target_ep: 7
+  target_mode: weighted
+  hard_ep_weight: 3.0
+  max_episode_steps: 1000
+  init_mode: near_target
+  init_noise: 0.05
+  fall_grace_steps: 50
+  start_grace_steps: 100
+  w_down: 2.0
+  progress_reward_coef: 0.5
+
+algo: TQC
+total_timesteps: 2_000_000
+n_envs: 8
+tqc:
+  policy: MlpPolicy
+  learning_rate: 3.0e-4
+  buffer_size: 1_000_000
+  batch_size: 512
+  tau: 0.005
+  gamma: 0.99
+  train_freq: 1
+  gradient_steps: 8
+  top_quantiles_to_drop_per_net: 2
+  policy_kwargs:
+    net_arch: [256, 256]
+    n_critics: 3
+    n_quantiles: 25
+callbacks:
+  rollout_log_freq: 10_000
+  checkpoint_freq: 200_000
+eval:
+  freq: 50_000
+  n_episodes: 32
+  deterministic: true
+  final_n_episodes: 80

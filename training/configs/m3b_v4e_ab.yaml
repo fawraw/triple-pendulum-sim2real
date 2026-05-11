@@ -1,0 +1,42 @@
+# Pod E: A+B combo — w_down=2 + EP4/EP6 oversampling ×3
+# Best combo of the two cleanest single-variable fixes.
+# A: fixes EP2 regression (w_down=2 keeps base stability prior)
+# B: fixes EP4/EP6 exposure (×3 → ~30% each instead of 12.5%)
+# Expected: EP2 ≥70% + EP4/EP6 ≥50% + overall ≥75%
+stage: M3b_v4E
+
+env:
+  target_ep: 7
+  target_mode: weighted
+  hard_ep_weight: 3.0
+  max_episode_steps: 1000
+  init_mode: near_target
+  init_noise: 0.05
+  fall_grace_steps: 20
+  w_down: 2.0
+
+algo: TQC
+total_timesteps: 2_000_000
+n_envs: 8
+tqc:
+  policy: MlpPolicy
+  learning_rate: 3.0e-4
+  buffer_size: 1_000_000
+  batch_size: 512
+  tau: 0.005
+  gamma: 0.99
+  train_freq: 1
+  gradient_steps: 8
+  top_quantiles_to_drop_per_net: 2
+  policy_kwargs:
+    net_arch: [256, 256]
+    n_critics: 3
+    n_quantiles: 25
+callbacks:
+  rollout_log_freq: 10_000
+  checkpoint_freq: 200_000
+eval:
+  freq: 50_000
+  n_episodes: 32
+  deterministic: true
+  final_n_episodes: 80
