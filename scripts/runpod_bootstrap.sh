@@ -53,13 +53,21 @@ export MLFLOW_TRACKING_URI="${MLFLOW_TRACKING_URI:-file:/workspace/mlruns}"
 # that triggers a podStop after IDLE_SHUTDOWN_MIN consecutive minutes of
 # GPU<5%. Disabled if RUNPOD_API_KEY is unset (no way to call the API).
 spawn_idle_watchdog() {
-    if [ "${AUTO_SHUTDOWN}" = "1" ] || [ -z "${RUNPOD_API_KEY:-}" ] || [ -z "${RUNPOD_POD_ID:-}" ]; then
+    # Always spawn watchdog regardless of AUTO_SHUTDOWN — even with AUTO_SHUTDOWN=1,
+    # if per_ep_eval gets stuck the pod would run forever without a safety net.
+    # Use a longer threshold (2h) when AUTO_SHUTDOWN=1 to give eval time to finish.
+    if [ -z "${RUNPOD_API_KEY:-}" ] || [ -z "${RUNPOD_POD_ID:-}" ]; then
         return
+    fi
+    # When AUTO_SHUTDOWN=1, use 2h threshold; otherwise use TP_IDLE_SHUTDOWN_MIN
+    local effective_threshold=${IDLE_SHUTDOWN_MIN}
+    if [ "${AUTO_SHUTDOWN:-1}" = "1" ]; then
+        effective_threshold=120  # 2h safety net for stuck per_ep_eval
     fi
     (
         idle=0
         check_every=60
-        threshold_seconds=$((IDLE_SHUTDOWN_MIN * 60))
+        threshold_seconds=$((effective_threshold * 60))
         while true; do
             sleep "$check_every"
             util=$(nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits 2>/dev/null | head -1)
