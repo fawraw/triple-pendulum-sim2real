@@ -177,8 +177,12 @@ def main(cfg_path: str) -> None:
         # (intentional: we want fresh on-policy data for the new task distribution).
         resolved = str(ROOT / load_model_path) if not load_model_path.startswith("/") else load_model_path
         print(f"[curriculum] Loading model from: {resolved}")
-        model = TQC.load(resolved, env=train_env, device=device, **tqc_kwargs)
-        model.set_logger(model.logger)
+        # Override learning_rate, buffer_size etc. via custom_objects so the config's
+        # phase-specific values are applied (TQC.load otherwise restores trained values).
+        custom_objects = {k: v for k, v in tqc_kwargs.items()
+                          if k in {"learning_rate", "buffer_size", "batch_size",
+                                   "tau", "gamma", "train_freq", "gradient_steps"}}
+        model = TQC.load(resolved, env=train_env, device=device, custom_objects=custom_objects)
     else:
         model = TQC(
             policy,
