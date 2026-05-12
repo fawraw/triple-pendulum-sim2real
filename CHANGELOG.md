@@ -4,6 +4,40 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ---
 
+## 2026-05-12 — M3b-v4 post-mortem + bootstrap fixes
+
+### M3b-v4 results (A/C/D completed; B/E/F/G/H failed mid-run)
+
+Three pods completed. Five pods failed due to two independent bugs discovered in the bootstrap/validation layer.
+
+| Pod | Key fix | Overall | EP4 | EP6 | EP7 | Outcome |
+|---|---|---|---|---|---|---|
+| A | `w_down=2` | **50%** | 0% | 0% | 10% | EP7 regressed 80→10% |
+| C | Progress reward + grace | **52.5%** | 0% | 0% | 10% | EP7 same regression |
+| D | M3c [512,512] 4M steps | **67.5%** | 0% | 0% | 80% | Ties M3b GPU baseline |
+| B | Oversample EP4/EP6 ×3 | — | — | — | — | Stuck 14h in per_ep_eval → terminated |
+| H | A+C+vel=0.01 | — | — | — | — | Stuck 12h in per_ep_eval → terminated |
+| E, F, G | A+B combos | — | — | — | — | Crashed: ValueError on target_mode='weighted' |
+
+**Key finding:** M3b-v4D (4M steps, [512,512]) scores 67.5% — identical to the 2M [256,256] baseline. Capacity and gradient volume are definitively not the bottleneck for EP4/EP6=0%.
+
+### Fixed — `target_mode='weighted'` validation crash (`dae49d3`)
+
+`_validate_cfg_m3()` only accepted `"fixed"` and `"random"`. Any config with `target_mode="weighted"` (pods B/E/F/G) crashed with `ValueError` before a single training step.
+
+### Fixed — idle watchdog disabled with AUTO_SHUTDOWN=1 (`8a6d71a`)
+
+`spawn_idle_watchdog()` returned early when `AUTO_SHUTDOWN=1` (the default for training pods), leaving no safety net if `per_ep_eval()` or the training loop got stuck. Pods B (~14h, ~$3.97) and H (~12h, ~$3.28) burned ~$7 before manual intervention.
+
+Fix: watchdog always spawns. Uses 2h threshold when `AUTO_SHUTDOWN=1` (generous for long eval runs, still catches stuck pods) and `TP_IDLE_SHUTDOWN_MIN` when `AUTO_SHUTDOWN=0`.
+
+### Pending
+
+- Re-launch B, E, F, G with `TP_REPO_REF=8a6d71a` when GPU US-IL-1 becomes available
+- If oversample fails, escalate to two-phase curriculum (EP4/EP6 fixed-mode pre-training → random-mode fine-tune)
+
+---
+
 ## 2026-05-10 — Audit-driven RL fixes + cloud expansion
 
 This was a heavy session focused on understanding why M3b plateau'd at 67–68% across two independent runs (CPU and GPU), and on operationalizing the cloud training stack.
