@@ -23,6 +23,9 @@
 #                                         (when AUTO_SHUTDOWN=0; safety against forgotten pods)
 #   RUNPOD_API_KEY          required for any auto-shutdown path
 #   RUNPOD_POD_ID           required (RunPod injects this automatically)
+#   TP_MAX_RUNTIME_MIN      default: 480 (8h) — hard wall-clock kill for the training process.
+#                                         Prevents per_ep_eval from running forever when GPU
+#                                         inference keeps util >5% (fooling the idle watchdog).
 
 set -uo pipefail   # NOT -e: we want the trap to fire on errors, not silent exit
 
@@ -40,6 +43,7 @@ MODULE="${TP_STAGE_MODULE:-}"
 CONFIG="${TP_STAGE_CONFIG:-}"
 AUTO_SHUTDOWN="${TP_AUTO_SHUTDOWN:-1}"
 IDLE_SHUTDOWN_MIN="${TP_IDLE_SHUTDOWN_MIN:-30}"
+MAX_RUNTIME_MIN="${TP_MAX_RUNTIME_MIN:-480}"  # 8h default wall-clock limit
 
 # Defaults that the rest of the codebase expects to be set.
 # - MUJOCO_GL=osmesa: required for headless rendering on a fresh PyTorch image
@@ -209,14 +213,19 @@ assert cuda_ok, f'CUDA not available — driver mismatch (torch {torch.__version
 # Spawn idle-pod watchdog now that everything is healthy.
 spawn_idle_watchdog
 
-# 3. Run training
+# 3. Run training (with hard wall-clock limit to prevent per_ep_eval from running forever
+# when GPU inference keeps utilization >5% and fools the idle watchdog).
 echo ""
-echo "=== Starting training ==="
+echo "=== Starting training (wall-clock limit: ${MAX_RUNTIME_MIN}min) ==="
 LOG_FILE="/workspace/training.log"
 set +e
-PYTHONUNBUFFERED=1 python -m "$MODULE" --config "$CONFIG" 2>&1 | tee "$LOG_FILE"
+PYTHONUNBUFFERED=1 timeout "${MAX_RUNTIME_MIN}m" \
+    python -m "$MODULE" --config "$CONFIG" 2>&1 | tee "$LOG_FILE"
 TRAIN_RC=${PIPESTATUS[0]}
 set -e
+if [ "$TRAIN_RC" = "124" ]; then
+    echo "[bootstrap] WARN: training killed by ${MAX_RUNTIME_MIN}min wall-clock timeout (per_ep_eval stuck?)"
+fi
 echo ""
 echo "=== Training exit code: $TRAIN_RC ==="
 
