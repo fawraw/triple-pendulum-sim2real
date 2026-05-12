@@ -169,15 +169,26 @@ def main(cfg_path: str) -> None:
     # device='auto' picks cuda when available, cpu otherwise. We surface
     # the actual device via an MLflow tag so the run record is unambiguous.
     device = tqc_kwargs.pop("device", "auto")
-    model = TQC(
-        policy,
-        train_env,
-        verbose=0,
-        tensorboard_log=str(ROOT / "runs" / run_name),
-        policy_kwargs=policy_kwargs,
-        device=device,
-        **tqc_kwargs,
-    )
+    load_model_path = cfg.get("load_model_path", "")
+
+    if load_model_path:
+        # Two-phase curriculum: load a pre-trained checkpoint and continue training
+        # on a new environment configuration. The replay buffer is NOT restored
+        # (intentional: we want fresh on-policy data for the new task distribution).
+        resolved = str(ROOT / load_model_path) if not load_model_path.startswith("/") else load_model_path
+        print(f"[curriculum] Loading model from: {resolved}")
+        model = TQC.load(resolved, env=train_env, device=device, **tqc_kwargs)
+        model.set_logger(model.logger)
+    else:
+        model = TQC(
+            policy,
+            train_env,
+            verbose=0,
+            tensorboard_log=str(ROOT / "runs" / run_name),
+            policy_kwargs=policy_kwargs,
+            device=device,
+            **tqc_kwargs,
+        )
     actual_device = str(model.device)
 
     cb_cfg = cfg.get("callbacks", {})
@@ -208,6 +219,8 @@ def main(cfg_path: str) -> None:
         mlflow.log_param("n_envs", n_envs)
         mlflow.log_param("device", actual_device)
         mlflow.log_param("git_commit", _git_commit())
+        if load_model_path:
+            mlflow.log_param("load_model_path", load_model_path)
 
         print(f"Run ID  : {run.info.run_id}")
         print(f"Run URL : {mlflow.get_tracking_uri()}/#/experiments/"

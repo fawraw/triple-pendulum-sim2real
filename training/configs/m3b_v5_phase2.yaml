@@ -1,0 +1,53 @@
+# M3b-v5 Phase 2: fine-tune on all 8 EPs using the Phase 1 checkpoint.
+#
+# Loads the Phase 1 model (EP4/EP6 specialist) and continues training in
+# random-mode across all 8 EPs.  The learning rate is halved vs Phase 1 to
+# slow down catastrophic forgetting of the EP4/EP6 prior.
+# A moderate hard_ep_weight=3 keeps EP4/EP6 visible but lets the policy
+# also maintain the easy EPs (EP0–3).
+#
+# load_model_path: relative to the project root, resolved at runtime.
+# Must match the final.zip written by Phase 1 run.
+
+stage: M3b_v5_phase2
+
+load_model_path: ""   # filled in by the launcher: checkpoints/<phase1_run>/final.zip
+
+env:
+  target_mode: weighted
+  hard_ep_weight: 3.0   # moderate oversample — keep EP4/EP6 visible without crowding
+  max_episode_steps: 1000
+  init_mode: near_target
+  init_noise: 0.05
+  fall_grace_steps: 20
+  w_down: 1.5           # compromise between w_down=1 (breaks EP2) and w_down=2 (breaks EP7)
+  vel_cost_coef: 0.02   # between 0.01 (EP7-friendly) and 0.05 (was too high)
+
+algo: TQC
+total_timesteps: 2_000_000
+n_envs: 8
+
+tqc:
+  policy: MlpPolicy
+  learning_rate: 1.5e-4   # half of Phase 1 to slow catastrophic forgetting
+  buffer_size: 1_000_000
+  batch_size: 512
+  tau: 0.005
+  gamma: 0.99
+  train_freq: 1
+  gradient_steps: 8
+  top_quantiles_to_drop_per_net: 2
+  policy_kwargs:
+    net_arch: [256, 256]
+    n_critics: 3
+    n_quantiles: 25
+
+callbacks:
+  rollout_log_freq: 10_000
+  checkpoint_freq:  200_000
+
+eval:
+  freq: 50_000
+  n_episodes: 32
+  deterministic: true
+  final_n_episodes: 80

@@ -1,0 +1,51 @@
+# M3b-v5 Phase 1: curriculum pre-training on EP4 + EP6 only.
+#
+# Rationale: EP4/EP6 have NEVER reached >10% in any random-mode run across
+# 10+ full runs and all fix combinations. The only approach that moved EP4 was
+# dedicated single-EP fixed-mode training (probe: EP4=60% at 200K steps).
+# Phase 1 forces 90%+ of episodes onto EP4/EP6 so the policy builds a strong
+# prior for those configurations.  Phase 2 then fine-tunes on all 8 EPs.
+#
+# hard_ep_weight=50 → EP4/EP6 each get 50/(50+50+6) ≈ 46% of episodes.
+# Combined EP4+EP6 ≈ 92% exposure (vs 25% with weight=3, 12.5% with weight=1).
+
+stage: M3b_v5_phase1
+
+env:
+  target_mode: weighted
+  hard_ep_weight: 50.0
+  max_episode_steps: 1000
+  init_mode: near_target
+  init_noise: 0.05
+  fall_grace_steps: 50      # generous: EP4/EP6 are hard, allow recovery time
+  w_down: 1.0               # pure adaptive reward (correct gradient direction)
+  vel_cost_coef: 0.01       # low vel penalty: EP4/EP6 need aggressive cart motion
+
+algo: TQC
+total_timesteps: 1_000_000  # 1M steps focused on hard EPs
+n_envs: 8
+
+tqc:
+  policy: MlpPolicy
+  learning_rate: 3.0e-4
+  buffer_size: 1_000_000
+  batch_size: 512
+  tau: 0.005
+  gamma: 0.99
+  train_freq: 1
+  gradient_steps: 8
+  top_quantiles_to_drop_per_net: 2
+  policy_kwargs:
+    net_arch: [256, 256]
+    n_critics: 3
+    n_quantiles: 25
+
+callbacks:
+  rollout_log_freq: 10_000
+  checkpoint_freq:  200_000
+
+eval:
+  freq: 50_000
+  n_episodes: 32
+  deterministic: true
+  final_n_episodes: 80   # 10 per EP — used to pick best checkpoint
