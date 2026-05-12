@@ -73,7 +73,10 @@ def run_phase(cfg_path: str, load_model_path: str = "") -> str:
 
 def main() -> None:
     p = argparse.ArgumentParser()
-    p.add_argument("--phase1_config", default="training/configs/m3b_v5_phase1.yaml")
+    # --config is accepted as an alias for --phase1_config so the generic bootstrap
+    # script (which always passes --config $TP_STAGE_CONFIG) works without changes.
+    p.add_argument("--config", "--phase1_config", dest="phase1_config",
+                   default="training/configs/m3b_v5_phase1.yaml")
     p.add_argument("--phase2_config", default="training/configs/m3b_v5_phase2.yaml")
     args = p.parse_args()
 
