@@ -1,0 +1,49 @@
+# M3b-v6 Phase 2: consolidation — fine-tune on all 8 EPs with moderate
+# oversample to recover any forgotten skills from Phase 1.
+#
+# Loads the Phase 1 final.zip (EP4/EP6 specialist) and rebalances training
+# across all 8 EPs.  LR is halved again (5e-5) so phase 2 mostly maintains
+# the current policy and gently re-introduces under-trained EPs.
+
+stage: M3b_v6_phase2
+
+load_model_path: ""  # filled in by curriculum runner at launch time
+
+env:
+  target_mode: weighted
+  hard_ep_weight: 2.5       # mild oversample — EP4/EP6 ~21% each, others ~10% each
+  max_episode_steps: 1000
+  init_mode: near_target
+  init_noise: 0.05
+  fall_grace_steps: 20
+  w_down: 1.0
+  vel_cost_coef: 0.02
+
+algo: TQC
+total_timesteps: 500_000    # consolidation; lighter than phase 1
+n_envs: 4
+
+tqc:
+  policy: MlpPolicy
+  learning_rate: 5.0e-5     # very small — protect both phase-1 gains and pre-existing skills
+  buffer_size: 500_000
+  batch_size: 256
+  tau: 0.005
+  gamma: 0.99
+  train_freq: 1
+  gradient_steps: 4
+  top_quantiles_to_drop_per_net: 2
+  policy_kwargs:
+    net_arch: [256, 256]
+    n_critics: 3
+    n_quantiles: 25
+
+callbacks:
+  rollout_log_freq: 10_000
+  checkpoint_freq:  100_000
+
+eval:
+  freq: 50_000
+  n_episodes: 32
+  deterministic: true
+  final_n_episodes: 80

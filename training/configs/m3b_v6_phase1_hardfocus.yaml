@@ -1,0 +1,52 @@
+# M3b-v6 Phase 1: heavy EP4/EP6 fine-tuning from the existing 67.5% baseline.
+#
+# Warm-start from m3_all_eps_20260509_162351/best_model.zip (M3b CPU best).
+# Probe data: 200K EP4-fixed → 60% EP4. We aim to match/exceed that for both
+# EP4 and EP6 simultaneously using weighted mode.
+#
+# hard_ep_weight=20 → EP4 and EP6 each get ~46% of episodes.
+# 600K steps × 46% ≈ 276K steps each — more than the probe (200K → 60%).
+# LR is 3× smaller than M3b to avoid destroying other-EP skills.
+
+stage: M3b_v6_phase1
+
+load_model_path: "checkpoints/m3_all_eps_20260509_162351/best_model.zip"
+
+env:
+  target_mode: weighted
+  hard_ep_weight: 20.0      # EP4 and EP6 dominate but other EPs stay visible (~1.4% each)
+  max_episode_steps: 1000
+  init_mode: near_target
+  init_noise: 0.05
+  fall_grace_steps: 20
+  w_down: 1.0               # adaptive reward, correct gradient direction
+  vel_cost_coef: 0.02
+
+algo: TQC
+total_timesteps: 600_000    # ~46% × 600K = 276K each on EP4/EP6 (probe-equivalent)
+n_envs: 4                   # smaller for CPU host
+
+tqc:
+  policy: MlpPolicy
+  learning_rate: 1.0e-4     # 3× smaller than M3b (3e-4) to limit forgetting
+  buffer_size: 500_000
+  batch_size: 256
+  tau: 0.005
+  gamma: 0.99
+  train_freq: 1
+  gradient_steps: 4
+  top_quantiles_to_drop_per_net: 2
+  policy_kwargs:
+    net_arch: [256, 256]
+    n_critics: 3
+    n_quantiles: 25
+
+callbacks:
+  rollout_log_freq: 10_000
+  checkpoint_freq:  100_000
+
+eval:
+  freq: 50_000
+  n_episodes: 32
+  deterministic: true
+  final_n_episodes: 80
