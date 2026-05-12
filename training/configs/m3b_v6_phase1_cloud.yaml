@@ -1,0 +1,48 @@
+# M3b-v6 Phase 1 CLOUD variant: warm-start from M3c [512,512] 67.5% baseline.
+# Same fine-tuning strategy as the CPU version but uses the bigger network
+# already on the RunPod tp-data volume.
+
+stage: M3b_v6_cloud_phase1
+
+load_model_path: "checkpoints/m3_all_eps_20260511_073323/best_model.zip"
+
+env:
+  target_mode: weighted
+  hard_ep_weight: 20.0
+  max_episode_steps: 1000
+  init_mode: near_target
+  init_noise: 0.05
+  fall_grace_steps: 20
+  w_down: 1.0
+  vel_cost_coef: 0.02
+
+algo: TQC
+total_timesteps: 600_000
+n_envs: 8                   # GPU can handle more parallelism
+
+tqc:
+  policy: MlpPolicy
+  learning_rate: 1.0e-4
+  buffer_size: 500_000
+  batch_size: 512
+  tau: 0.005
+  gamma: 0.99
+  train_freq: 1
+  gradient_steps: 8
+  top_quantiles_to_drop_per_net: 2
+  # NOTE: net_arch ignored on load (architecture comes from the checkpoint = [512,512]).
+  # Kept here for documentation / consistency.
+  policy_kwargs:
+    net_arch: [512, 512]
+    n_critics: 3
+    n_quantiles: 25
+
+callbacks:
+  rollout_log_freq: 10_000
+  checkpoint_freq:  100_000
+
+eval:
+  freq: 50_000
+  n_episodes: 32
+  deterministic: true
+  final_n_episodes: 80
