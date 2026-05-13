@@ -4,6 +4,60 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ---
 
+## 2026-05-13 — M3b-v6 BREAKTHROUGH: 72.5%, all 8 EPs non-zero
+
+After a full RL diagnostic on 2026-05-12 (LQR control, EP4 rollout analysis,
+visual inspection) proved that EP4/EP6=0% was a pure exposure problem (not
+physics or env), M3b-v6 targeted fine-tuning achieved the first all-8-EPs-
+non-zero policy in random mode.
+
+### Results comparison
+
+| Run | Net | Warm-start | Strategy | Overall | EP4 | EP6 |
+|---|---|---|---|---:|---:|---:|
+| All M3b/M3c (random-mode baselines) | varies | — | from scratch | 60–68% | **0** | **0** |
+| M3b-v6 CT 1018 | [256,256] | M3b CPU 67.5% | hard_ep_weight=20 + consolidate | 56% | 0 | 30 |
+| **M3b-v6 cloud** | **[512,512]** | **M3c 67.5%** | **hard_ep_weight=20 + consolidate** | **72.5%** | **30** | **40** |
+
+The [256,256] network couldn't hold both old skills (EP7) and new (EP4/EP6)
+during heavy fine-tuning — EP7 catastrophically forgot (80→0%).  The bigger
+[512,512] network retained EP5 (80%), partially retained EP7 (40%), and
+learned EP4/EP6.
+
+### Diagnostic findings (2026-05-12, drove the v6 design)
+
+- LQR stabilizes EP4 and EP6 at 1000/1000 steps with action max ±0.21.
+  Physics is fine; motor over-spec.  EP4 has only 1 unstable mode (easier
+  than EP7's 3).
+- Trained TQC on EP4 outputs bang-bang ±1 → cart barely moves (range 0.15m)
+  but shakes the chain → fall in 184 steps (WORSE than zero-action's 387).
+  Pure exposure problem (12.5% random-mode insufficient).
+- Wiki labels were wrong: EP4 = DDU (tip-up only), EP6 = DUU.  Bit
+  convention is MSB = tip.
+
+### M3b-v5 dropped
+
+The v5 curriculum (from-scratch with hard_ep_weight=50) was started but
+killed before phase 1 completed once the diagnostic showed warm-starting
+from the existing 67.5% baseline was far better (v6).
+
+### In flight
+
+- M3b-v6 phase 3 (consolidate from 72.5% checkpoint, 300K @ LR=2e-5) —
+  goal: recover EP7 80% without losing EP4/EP6.
+- M3b-v7 (hard_ep_weight=10 instead of 20, fresh from M3c baseline) —
+  alternative trade-off.
+
+### Bootstrap fixes (validated end-to-end via smoke test)
+
+- `dae49d3` target_mode='weighted' validation
+- `8a6d71a` idle watchdog always spawns
+- `4a58200` wall-clock TP_MAX_RUNTIME_MIN timeout (kills stuck per_ep_eval)
+
+All three fixes validated by 3-min smoke pod that auto-stopped cleanly.
+
+---
+
 ## 2026-05-12 — M3b-v4 post-mortem + bootstrap fixes
 
 ### M3b-v4 results (A/C/D completed; B/E/F/G/H failed mid-run)
