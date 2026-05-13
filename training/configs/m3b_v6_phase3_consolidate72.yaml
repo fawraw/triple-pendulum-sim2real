@@ -1,0 +1,50 @@
+# M3b-v6 Phase 3: light consolidation from 72.5% cloud checkpoint.
+#
+# Goal: recover EP7 (40%→60%+) and consolidate EP4/EP6 (30/40 → stable)
+# without disturbing EP0/1/2/3/5 (all 80-100%).
+#
+# Strategy: tiny LR (2e-5), near-uniform sampling (hard_ep_weight=1.5),
+# short run (300K steps) to nudge the policy back toward EP7 mastery.
+
+stage: M3b_v6_phase3_consolidate
+
+load_model_path: "checkpoints/m3_all_eps_20260512_204421/final.zip"
+
+env:
+  target_mode: weighted
+  hard_ep_weight: 1.5       # near-uniform: EP4/EP6 ~14% each, others ~12% each
+  max_episode_steps: 1000
+  init_mode: near_target
+  init_noise: 0.05
+  fall_grace_steps: 20
+  w_down: 1.0
+  vel_cost_coef: 0.02
+
+algo: TQC
+total_timesteps: 300_000
+n_envs: 8
+
+tqc:
+  policy: MlpPolicy
+  learning_rate: 2.0e-5     # extra-low: protect the 72.5% policy from disruption
+  buffer_size: 500_000
+  batch_size: 512
+  tau: 0.005
+  gamma: 0.99
+  train_freq: 1
+  gradient_steps: 8
+  top_quantiles_to_drop_per_net: 2
+  policy_kwargs:
+    net_arch: [512, 512]
+    n_critics: 3
+    n_quantiles: 25
+
+callbacks:
+  rollout_log_freq: 10_000
+  checkpoint_freq:  50_000
+
+eval:
+  freq: 50_000
+  n_episodes: 32
+  deterministic: true
+  final_n_episodes: 80

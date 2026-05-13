@@ -1,0 +1,50 @@
+# M3b-v7 Phase 1: moderate-focus variant of v6 cloud.
+#
+# v6 cloud used hard_ep_weight=20 (~46% each on EP4/EP6) and got 72.5%
+# but EP7 regressed 80%→40%.  v7 tries hard_ep_weight=10 (~30% each on EP4/EP6)
+# to preserve EP5/EP7 better while still teaching EP4/EP6.
+#
+# Trade-off: less EP4/EP6 exposure per step but more balanced training.
+
+stage: M3b_v7_phase1
+
+load_model_path: "checkpoints/m3_all_eps_20260511_073323/best_model.zip"
+
+env:
+  target_mode: weighted
+  hard_ep_weight: 10.0      # EP4/EP6 ~30% each, others ~6.7% each (vs 20=46/1.4)
+  max_episode_steps: 1000
+  init_mode: near_target
+  init_noise: 0.05
+  fall_grace_steps: 20
+  w_down: 1.0
+  vel_cost_coef: 0.02
+
+algo: TQC
+total_timesteps: 600_000
+n_envs: 8
+
+tqc:
+  policy: MlpPolicy
+  learning_rate: 1.0e-4
+  buffer_size: 500_000
+  batch_size: 512
+  tau: 0.005
+  gamma: 0.99
+  train_freq: 1
+  gradient_steps: 8
+  top_quantiles_to_drop_per_net: 2
+  policy_kwargs:
+    net_arch: [512, 512]
+    n_critics: 3
+    n_quantiles: 25
+
+callbacks:
+  rollout_log_freq: 10_000
+  checkpoint_freq:  100_000
+
+eval:
+  freq: 50_000
+  n_episodes: 32
+  deterministic: true
+  final_n_episodes: 80
