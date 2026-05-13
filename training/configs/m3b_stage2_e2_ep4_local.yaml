@@ -1,0 +1,46 @@
+# Stage 2 / Experiment E2 (CT 1018 variant): EP4 specialist from local
+# M3b CPU 67.5% [256,256] baseline. Same hypothesis as cloud E2 but with
+# the smaller network. Tests if capacity matters for single-EP specialization.
+
+stage: M3b_stage2_e2_ep4_local
+
+load_model_path: "checkpoints/m3_all_eps_20260509_162351/best_model.zip"
+
+env:
+  target_ep: 4
+  target_mode: fixed
+  max_episode_steps: 1000
+  init_mode: near_target
+  init_noise: 0.05
+  fall_grace_steps: 20
+  w_down: 1.0
+  vel_cost_coef: 0.02
+
+algo: TQC
+total_timesteps: 500_000
+n_envs: 4   # CPU on CT 1018
+
+tqc:
+  policy: MlpPolicy
+  learning_rate: 1.0e-4
+  buffer_size: 500_000
+  batch_size: 256
+  tau: 0.005
+  gamma: 0.99
+  train_freq: 1
+  gradient_steps: 4
+  top_quantiles_to_drop_per_net: 2
+  policy_kwargs:
+    net_arch: [256, 256]  # matches the loaded checkpoint
+    n_critics: 3
+    n_quantiles: 25
+
+callbacks:
+  rollout_log_freq: 10_000
+  checkpoint_freq:  100_000
+
+eval:
+  freq: 50_000
+  n_episodes: 16
+  deterministic: true
+  final_n_episodes: 80
