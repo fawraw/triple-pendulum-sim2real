@@ -110,7 +110,7 @@ See [n8n-Orchestration](https://github.com/fawraw/triple-pendulum-sim2real/wiki/
 | 0. Literature gap confirmed | ✅ | 2026-05-08 |
 | 1. MuJoCo model, 3 links on cart | ✅ | 2026-05-08 |
 | 2. Stabilize UUU in sim (TQC) | 🟡 partial | 2026-05-08 |
-| 3. All 8 EPs stabilized in sim | 🟡 **8 pods parallel** (M3b-v4 A–H, multiple strategies, ETA ~15h CET) | 2026-05-11 |
+| 3. All 8 EPs stabilized in sim | 🟢 **M3b-v6 cloud: 72.5%, all 8 EPs non-zero** (EP4=30%, EP6=40%) — scientific milestone achieved. 75% threshold ~2.5% away; v6-phase3 and v7 consolidation runs in flight. | 2026-05-13 |
 | 4. 56 transitions in sim | ⬜ scaffolded | |
 | 5. Domain randomization | ⬜ | |
 | 6. Hardware v1 assembled | ⬜ | |
@@ -121,82 +121,49 @@ See [n8n-Orchestration](https://github.com/fawraw/triple-pendulum-sim2real/wiki/
 
 ### Latest results
 
-**M2 (UUU, 150K steps, [128,128]):** mean episode length 824/1000 over 20 deterministic eval rollouts, peak 1000. Pipeline validated end-to-end.
+**🎯 M3b-v6 cloud (2026-05-13): 72.5% overall, all 8 EPs non-zero** — first time in 10+ random-mode runs that EP4 and EP6 both produce successful rollouts.
 
-![learning curve](assets/learning_curve_m2.png)
+| EP | Config | Best baseline (M3c, 67.5%) | **M3b-v6 cloud [512,512]** | Delta |
+|:--:|:------:|---:|---:|---:|
+| 0 | DDD | ~ | **100%** | = |
+| 1 | DDU | ~ | **100%** | = |
+| 2 | DUD | 100% | **100%** | = |
+| 3 | DUU | 90% | **90%** | = |
+| **4** | **DDU** | **0%** | **30%** | **▲▲▲** |
+| 5 | UDU | 80% | **80%** | = |
+| **6** | **DUU** | **0%** | **40%** | **▲▲▲** |
+| 7 | UUU | 80% | **40%** | ▼ |
+| **Overall** | | **67.5%** | **72.5%** | **▲ +5%** |
 
-**M3b (2M steps) — two parallel runs converge to ~67%:**
-
-| EP | Config | CT 1018 (CPU, n_envs=1, grad=1) | RunPod (A5000, n_envs=8, grad=8) |
-|:--:|:------:|:------------:|:------------:|
-| 0 | DDD | 100% | 100% |
-| 1 | DDU | 100% | 100% |
-| 2 | DUD | 50% | 100% |
-| 3 | DUU | 80% | 100% |
-| 4 | UDD | **0%** | **0%** |
-| 5 | UDU | 70% | 60% |
-| 6 | UUD | **0%** | **0%** |
-| 7 | UUU | 80% | 80% |
-| **Overall** | | **67.5%** | **68%** |
-
-> **Diagnosis (audit 2026-05-10):** the plateau is **structural, not capacity-bound**. The env's `_is_fallen()` used a single 0.6 rad threshold for all 3 links. EP4 (UDD) and EP6 (UUD) need link 1 vertical while links 2–3 hang — but the cart's stabilizing motion shakes the hanging links naturally past 0.6 rad → false-positive fall → -100 penalty → **policy can't learn**. EP0–3 work (link 1 stable when down). EP7 works (all targets at 0). EP4/EP6 stuck at 0%.
+> **What worked:** warm-start from the existing 67.5% [512,512] checkpoint (M3c), then 2-phase targeted fine-tuning — phase 1 with `hard_ep_weight=20` (~46% exposure each on EP4/EP6) at LR=1e-4 for 600K steps, then phase 2 consolidation with `hard_ep_weight=2.5` at LR=5e-5 for 500K steps.  Bigger network ([512,512]) was critical: the [256,256] variant (CT 1018) hit catastrophic forgetting and dropped EP7 to 0%.
 >
-> **Two bugs found and fixed (2026-05-10):**
->
-> **Bug 1 — False-positive fall detection:** `_is_fallen()` used a single 0.6 rad threshold for all links. When the DOWN-targeted links swing past 34° (natural physics), the env killed the episode with -100 penalty. Policy learned to do nothing.
->
-> ```
-> BEFORE: any link > 0.6 rad  →  fall  →  -100
-> AFTER:  UP-targeted link > 0.6 rad  →  fall  →  -100
->         DOWN-targeted link > 1.5 rad →  fall  →  -100  (much looser)
-> ```
->
-> **Bug 2 — Wrong reward focus:** reward always penalised link 1 (base/cart) 5× regardless of target. For EP4 (base DOWN, tip UP), the policy should focus on the tip — but the reward kept demanding perfect control of the hanging base.
->
-> ```
-> BEFORE:  5×err[0]² + 1×err[1]² + 1×err[2]²   (always base 5×)
-> AFTER:   w[0]×err[0]² + w[1]×err[1]² + w[2]²  where w[i]=5 if link i is UP, 1 if DOWN
-> ```
->
-> **Validation probes** (200K steps EP-fixed, 2026-05-10 evening):
-> - EP4-v3 with adaptive reward: **60%** (was 0% across 3 prior runs) ✅
-> - EP6 with adaptive reward: **10%** (was 0%) — needs more steps
->
-> **M3b-v3** (2M steps, adaptive reward, eval strict, `stage=M3b_v3`) launched on RunPod A5000, ETA ~5h.
+> **Diagnostic (2026-05-12) drove the v6 design.** Before v6 we ran a full RL diagnostic:
+> - **LQR control** (numerically linearized + Riccati): stabilizes EP4 and EP6 at 1000/1000 steps with action max ±0.21.  Physics is fine, motor over-spec, env correctly configured.  EP4 has only 1 unstable mode (easier than EP7's 3).
+> - **Policy vs zero-action on EP4**: trained TQC survives only 184 steps before fall — WORSE than zero-action's 387.  Bang-bang ±1 actions cancel out (cart barely moves ±0.15m) but shake the chain → fall.  Pure exposure problem (12.5% random-mode insufficient).
+> - **Wiki re-labeling**: EP4 = DDU (tip-up only), not UDD as documented.  EP6 = DUU.  Bit 2 (MSB) = link 3 (tip).
 
 ### M3 debugging journey
 
 ```
-Run              Steps  Overall  EP4   EP6   Notes
-─────────────────────────────────────────────────────────────────────
-M3 baseline      400K   42.5%    0%    0%    First attempt
-M3b CPU          2M     67.5%    0%    0%    More steps, same plateau
-M3b GPU          2M     68.0%    0%    0%    GPU (8×faster), same plateau
-M3b-v2           2M     61.3%    0%    0%    Per-link fix, eval not strict → worse
-Probe EP4-v3     200K   n/a      60%   n/a   ← adaptive reward fix validated!
-Probe EP6        200K   n/a      n/a   10%   ← non-zero first time
-M3b-v3          2M      60%     0%    0%    EP2 regression, EP4/EP6 still 0%
-M3b-v4 A–H     2M×7    TBD     TBD   TBD   8 parallel pods, ETA ~15h CET
+Run                    Net          Steps    Overall  EP4   EP6   Notes
+──────────────────────────────────────────────────────────────────────────────
+M3 baseline            [256,256]    400K     42.5%    0%    0%    First attempt
+M3b CPU                [256,256]    2M       67.5%    0%    0%    More steps, same plateau
+M3b GPU                [256,256]    2M       68.0%    0%    0%    GPU (8×faster), same
+M3b-v2                 [256,256]    2M       61.3%    0%    0%    Per-link fix + eval bug
+Probe EP4-fixed        [256,256]    200K     n/a      60%   n/a   Pure EP4 training works!
+M3b-v3 (adaptive)      [256,256]    2M       60%      0%    0%    EP2 regression
+M3b-v4 A/B/C/E         [256,256]    2M       50-52%   0%    0-10% Oversample variants, all failed
+M3b-v4D (M3c [512²])   [512,512]    4M       67.5%    0%    0%    Capacity not the bottleneck
+M3b-v6 CT 1018         [256,256]    1.1M     56%      0%    30%   Catastrophic forgetting on EP7
+🎯 M3b-v6 CLOUD        [512,512]    1.1M     72.5%    30%   40%   ← BREAKTHROUGH, all 8 EPs > 0
+M3b-v6 phase 3         [512,512]    300K     TBD                  Consolidate from 72.5%
+M3b-v7 (weight=10)     [512,512]    1.1M     TBD                  Less-aggressive variant
 ```
 
-**M3b-v3 post-mortem:** Adaptive reward (UP=5, DOWN=1) introduced a new regression — EP2 dropped from 100% to 40% because removing the base-stability prior (`w_down=1`) hurt EPs where the base links correlate with upper-link stability. EP4/EP6 remain at 0% — the probe showed 60% with fixed-EP training but the full run allocates only 12.5% training time per EP.
+**Cumulative training cost on RunPod:** ~$18 USD total (all M3 experiments, including diagnostic + v6 + v7). CT 1018 free.
 
-**8 parallel pods (M3b-v4) running as of 2026-05-11:**
-
-| Pod | Key changes | Hypothesis |
-|---|---|---|
-| A | `w_down=2` | EP2 regression: base prior too weak |
-| B | Oversample EP4/EP6 ×3 | EP4/EP6: too little training time |
-| C | Progress reward + grace | EP4/EP6: no dense gradient in failed episodes |
-| D | M3c [512,512] 4M steps | Null: is it a capacity problem? |
-| E | **A+B** | Combo of two best individual fixes |
-| **F** | **A+B+C (full)** | Kitchen sink — highest chance of passing 75% |
-| G | Oversample ×5 + A + C | More aggressive if ×3 isn't enough |
-| H | A + C + `vel_cost=0.01` | Restore old vel_cost — tests EP7 regression cause |
-
-**Cumulative training cost on RunPod:** ~$14 USD total (all runs + 8 new pods). CT 1018 free.
-
-*Note on link numbering:* config labels like "UDD" read Top→Bottom (U=tip up, D=middle down, D=base down); code uses bit 0 = link 1 = base (cart-attached). Both are internally consistent — see [[System-Explained]] for details.
+*Note on link numbering:* `target_ep` is a 3-bit integer where bit 2 (MSB) = link 3 (tip), bit 1 = link 2 (mid), bit 0 = link 1 (base/cart-attached).  A 1 means UP.  So `target_ep=4` = 0b100 = DDU (tip-up only).  Earlier wiki edits had the bit order reversed — corrected 2026-05-12.
 
 ## Tech stack
 
