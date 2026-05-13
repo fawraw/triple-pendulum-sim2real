@@ -9,11 +9,15 @@ For EP4 specifically (the hardest):
   - For each rollout step, compute ||policy_action - LQR_action||
   - Aggregate divergence stats: success vs failure
 
-Output: JSON summary with all stats; also pickle a per-rollout trace for plotting.
+Output: JSON summary at /workspace/v6_analysis.json (or repo-relative).
+
+Accepts (and ignores) --config so the standard runpod bootstrap can invoke
+it as `python -m scripts.analyze_v6_checkpoint --config X` without crashing.
 """
 import os
 os.environ.setdefault("MUJOCO_GL", "osmesa")
 
+import argparse
 import sys
 import json
 from pathlib import Path
@@ -22,7 +26,8 @@ import pickle
 from scipy.linalg import solve_continuous_are
 import mujoco
 
-ROOT = Path("/workspace/triple-pendulum-sim2real")
+_DEFAULT_ROOT = Path("/workspace/triple-pendulum-sim2real")
+ROOT = _DEFAULT_ROOT if _DEFAULT_ROOT.exists() else Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from sb3_contrib import TQC
@@ -212,6 +217,10 @@ def analyze_ep(model, ep, n_rollouts=30, compute_lqr=False):
 
 
 def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--config", default="", help="ignored (for bootstrap compat)")
+    ap.parse_known_args()
+
     print(f"Loading: {CKPT}")
     model = TQC.load(str(CKPT), device="cpu")
     print(f"  policy: {model.policy.__class__.__name__}")
