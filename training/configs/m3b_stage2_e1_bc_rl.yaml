@@ -1,0 +1,62 @@
+# Stage 2 / Experiment E1: BC-then-RL with LQR demos on EP4 + EP6.
+#
+# Stage 1 found v6 actions diverge from LQR by 0.83 (in [-1,+1]) on EP4 →
+# policy is overshooting massively. Hypothesis: a BC pre-training step against
+# LQR demos can re-anchor the actor to small, smooth actions before RL takes over.
+#
+# Procedure (handled by training/train_bc_then_rl.py):
+#   - Load v6 72.5% checkpoint
+#   - Collect 100 LQR-controlled episodes on EP4 + 100 on EP6 (~200K transitions)
+#   - BC pre-train the actor for 30 epochs (~30s on GPU)
+#   - Hand off to standard fine-tuning (this same config interpreted as RL phase)
+
+stage: M3b_stage2_e1_bc_rl
+
+load_model_path: "checkpoints/m3_all_eps_20260512_204421/final.zip"
+
+# BC pre-training parameters
+bc:
+  n_eps_per: 100      # LQR episodes per hard EP
+  n_epochs: 30
+  batch_size: 256
+  lr: 3.0e-4
+
+# RL fine-tuning parameters (used by train_m3_all_eps after BC)
+env:
+  target_mode: weighted
+  hard_ep_weight: 20.0
+  max_episode_steps: 1000
+  init_mode: near_target
+  init_noise: 0.05
+  fall_grace_steps: 20
+  w_down: 1.0
+  vel_cost_coef: 0.02
+
+algo: TQC
+total_timesteps: 500_000
+n_envs: 8
+
+tqc:
+  policy: MlpPolicy
+  learning_rate: 5.0e-5    # smaller LR than v6 phase 1 — protect BC anchor
+  buffer_size: 500_000
+  batch_size: 512
+  tau: 0.005
+  gamma: 0.99
+  train_freq: 1
+  gradient_steps: 8
+  top_quantiles_to_drop_per_net: 2
+  policy_kwargs:
+    net_arch: [512, 512]
+    n_critics: 3
+    n_quantiles: 25
+
+callbacks:
+  rollout_log_freq: 10_000
+  checkpoint_freq:  100_000
+
+eval:
+  freq: 50_000
+  n_episodes: 32
+  deterministic: true
+  final_n_episodes: 80

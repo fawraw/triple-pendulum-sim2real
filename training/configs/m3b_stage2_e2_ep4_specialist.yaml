@@ -1,0 +1,52 @@
+# Stage 2 / Experiment E2: EP4 specialist from v6 72.5% baseline.
+#
+# Tests H2 (capacity per EP): can fine-tuning the v6 72.5% checkpoint on
+# EP4-only push EP4 success rate to >=80% in ~500K steps?
+#
+# - If yes: the network has the capacity, the multi-task fine-tune is the
+#   bottleneck → next step is distillation from per-EP specialists.
+# - If no: even single-EP RL fine-tuning can't escape the suboptimal policy
+#   → need LQR imitation or different algorithm.
+
+stage: M3b_stage2_e2_ep4_specialist
+
+load_model_path: "checkpoints/m3_all_eps_20260512_204421/final.zip"
+
+env:
+  target_ep: 4
+  target_mode: fixed
+  max_episode_steps: 1000
+  init_mode: near_target
+  init_noise: 0.05
+  fall_grace_steps: 20
+  w_down: 1.0
+  vel_cost_coef: 0.02
+
+algo: TQC
+total_timesteps: 500_000
+n_envs: 8
+
+tqc:
+  policy: MlpPolicy
+  learning_rate: 1.0e-4
+  buffer_size: 500_000
+  batch_size: 512
+  tau: 0.005
+  gamma: 0.99
+  train_freq: 1
+  gradient_steps: 8
+  top_quantiles_to_drop_per_net: 2
+  policy_kwargs:
+    net_arch: [512, 512]
+    n_critics: 3
+    n_quantiles: 25
+
+callbacks:
+  rollout_log_freq: 10_000
+  checkpoint_freq:  100_000
+
+eval:
+  freq: 50_000
+  n_episodes: 16
+  deterministic: true
+  final_n_episodes: 80
