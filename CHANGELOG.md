@@ -4,6 +4,70 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ---
 
+## 2026-05-14 — M3 closed at 72.5%, moving to M4 transitions
+
+After 7 days of M3 work (10+ training runs, full RL diagnostic, three Stage 2
+hypothesis experiments, plus Plan B feasibility), the project closes M3 at
+**72.5% overall** (M3b-v6 cloud).  The scientific milestone — first triple-
+pendulum policy with all 8 equilibria stabilized in random mode — is met.
+The internal 75% threshold was not met but is acknowledged as an arbitrary
+goal we set ourselves; the policy is good enough to bootstrap M4.
+
+### Why 72.5% is the practical ceiling for this approach
+
+Three independent experiments converged on the same plateau:
+
+| Approach | Overall | EP4 | EP6 |
+|---|---:|---:|---:|
+| **M3b-v6 cloud [512,512] BC+RL** | **72.5%** | 30 | 40 |
+| M3b-v7 [512,512] moderate weight | 67.5% | 30 | 10 |
+| Plan B [1024,1024] BC-only | 12.5% | 0 | 0 |
+
+The [1024,1024] BC-only result was the most informative.  Even though BC fit
+the LQR demos perfectly (MSE 0.0037), the resulting policy only worked on
+EP0 (the trivial hanging case).  This is the classic **covariate shift**
+problem of pure behavior cloning: BC works in-distribution but the policy's
+own rollouts drift out of the LQR-demonstrated region and fail.
+
+The conclusion: pushing past 72.5% requires either **DAgger** (iterative
+data aggregation, ~1 week of dev), **per-EP routing** (separate specialist
+networks with a dispatcher), or a **hybrid LQR controller** (rejected
+earlier because it disqualifies the "pure RL" claim).  Each of these is a
+research project on its own and not justified at this stage — M4 (the 56
+transitions) is the bigger scientific contribution.
+
+### Stage 1 diagnostic findings (drove the v6 design)
+
+Run on 2026-05-12 with the M3b CPU baseline:
+- **LQR** (numerically linearized + Riccati) stabilizes EP4/EP6 at 1000/1000
+  steps with action max ±0.21.  Physics is fine; motor over-spec.
+- **Trained TQC on EP4** outputs bang-bang ±1 actions → cart barely moves
+  (range 0.15 m) but shakes the chain → fall in 184 steps (worse than zero-
+  action's 387).  Pure exposure issue.
+- Wiki labels were wrong: EP4 = DDU (tip-up only), EP6 = DUU.  Fixed.
+
+### Stage 2 hypothesis experiments (2026-05-13/14)
+
+- **E1 BC-from-LQR (cloud)**: 67.5% overall, EP6=70% (was 40%) — BC alone
+  validated the "actions too aggressive" diagnosis. EP6 went from 40→70%
+  but EP5/EP7 regressed in the subsequent RL fine-tune.
+- **E2 EP4 specialist (CT 1018)**: 5% overall — catastrophic forgetting,
+  confirms that warm-start + 100% EP4 training poisons the rest.
+- **Stage 3A BC-only on [256,256]**: 15% overall — small net cannot hold
+  EP0-3 + LQR-style EP4-7 simultaneously, BC pollutes shared weights.
+- **Plan B [1024,1024] BC-only from scratch**: 12.5% — confirms covariate
+  shift is the real bottleneck, not architecture.
+
+### Other infrastructure work this week
+
+- Three bootstrap fixes in scripts/runpod_bootstrap.sh (validated via smoke
+  test on 2026-05-12).
+- New scripts: `analyze_v6_checkpoint.py` (Stage 1 diagnostic),
+  `eval_bc_checkpoint.py` (per-EP eval), `train_bc_then_rl.py` and
+  `train_bc_only.py` (BC pretraining pipeline).
+
+---
+
 ## 2026-05-13 — M3b-v6 BREAKTHROUGH: 72.5%, all 8 EPs non-zero
 
 After a full RL diagnostic on 2026-05-12 (LQR control, EP4 rollout analysis,

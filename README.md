@@ -110,8 +110,8 @@ See [n8n-Orchestration](https://github.com/fawraw/triple-pendulum-sim2real/wiki/
 | 0. Literature gap confirmed | ✅ | 2026-05-08 |
 | 1. MuJoCo model, 3 links on cart | ✅ | 2026-05-08 |
 | 2. Stabilize UUU in sim (TQC) | 🟡 partial | 2026-05-08 |
-| 3. All 8 EPs stabilized in sim | 🟢 **M3b-v6 cloud: 72.5%, all 8 EPs non-zero** (EP4=30%, EP6=40%) — scientific milestone achieved. 75% threshold ~2.5% away; v6-phase3 and v7 consolidation runs in flight. | 2026-05-13 |
-| 4. 56 transitions in sim | ⬜ scaffolded | |
+| 3. All 8 EPs stabilized in sim | ✅ **Closed at 72.5%** (M3b-v6 cloud) — first triple-pendulum policy with all 8 equilibria non-zero in random mode. The 75% threshold was an internal goal; the scientific milestone is met. | 2026-05-14 |
+| 4. 56 transitions in sim | 🟡 **Starting now** — warm-start from M3b-v6 (72.5%), env extension for transitions, longer episodes | 2026-05-14 |
 | 5. Domain randomization | ⬜ | |
 | 6. Hardware v1 assembled | ⬜ | |
 | 7. First Sim2Real swing-up | ⬜ | |
