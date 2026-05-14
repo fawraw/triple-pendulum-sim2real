@@ -1,0 +1,19 @@
+# Stage 3A (CT 1018 variant): BC-only from local M3b CPU 67.5% [256,256].
+# Tests whether BC pre-training alone (no RL fine-tune) improves the hard EPs
+# while leaving the easy ones intact.
+
+stage: M3b_stage3a_bc_only_local
+
+load_model_path: "checkpoints/m3_all_eps_20260509_162351/best_model.zip"
+
+bc:
+  n_eps_per: 50          # LQR episodes per hard EP (4 EPs × 50 ≈ 200K transitions)
+  eps: [4, 5, 6, 7]      # all 4 hard EPs (was just [4, 6] in E1)
+  n_epochs: 30
+  batch_size: 256
+  lr: 3.0e-4
+
+env:
+  init_mode: near_target
+  init_noise: 0.05
+  max_episode_steps: 1000
