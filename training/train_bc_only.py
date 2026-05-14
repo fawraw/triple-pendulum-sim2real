@@ -34,6 +34,22 @@ from training.train_bc_then_rl import (  # noqa: E402
 
 from sb3_contrib import TQC
 
+# Complete the equilibrium table for ALL 8 EPs (was originally only EP4/EP6).
+# Bit convention: bit 0 = link 1 (base), bit 1 = link 2 (mid), bit 2 = link 3 (tip);
+# 1 = UP (absolute angle 0), 0 = DOWN (absolute angle pi).
+_FULL_EQ = {
+    0: np.array([0.0,  np.pi,  0.0,    0.0]),    # DDD
+    1: np.array([0.0,  0.0,    np.pi,  0.0]),    # UDD (base up only)
+    2: np.array([0.0,  np.pi, -np.pi,  np.pi]),  # DUD (mid up only)
+    3: np.array([0.0,  0.0,    0.0,    np.pi]),  # UUD (base+mid up)
+    4: np.array([0.0,  np.pi,  0.0,   -np.pi]),  # DDU (tip up only)
+    5: np.array([0.0,  0.0,   -np.pi, -np.pi]),  # UDU (base+tip up)
+    6: np.array([0.0,  np.pi, -np.pi,  0.0]),    # DUU (mid+tip up)
+    7: np.array([0.0,  0.0,    0.0,    0.0]),    # UUU
+}
+for _k, _v in _FULL_EQ.items():
+    EQ_QPOS.setdefault(_k, _v)
+
 
 def per_ep_eval(model, n_per_ep=10, max_steps=1000, init_noise=0.05):
     out = {}
@@ -79,16 +95,36 @@ def main():
     with open(args.config) as f:
         cfg = yaml.safe_load(f)
 
-    load_path = cfg["load_model_path"]
-    resolved = str(ROOT / load_path) if not load_path.startswith("/") else load_path
-    print(f"Loading: {resolved}")
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    model = TQC.load(resolved, device=device)
-    print(f"  device={model.device}")
+    load_path = cfg.get("load_model_path", "") or ""
 
-    # Eval BEFORE BC (baseline)
-    print("\n=== Baseline eval (before BC) ===")
-    eval_before = per_ep_eval(model, n_per_ep=10)
+    if load_path:
+        resolved = str(ROOT / load_path) if not load_path.startswith("/") else load_path
+        print(f"Loading: {resolved}")
+        model = TQC.load(resolved, device=device)
+        # Eval BEFORE BC (baseline)
+        print("\n=== Baseline eval (before BC) ===")
+        eval_before = per_ep_eval(model, n_per_ep=10)
+    else:
+        # From-scratch TQC build for BC pretraining
+        from training.env_utils import make_vec_env  # noqa: E402
+        print("From-scratch BC: building fresh TQC with policy_kwargs from config")
+        tqc_kwargs = dict(cfg["tqc"])
+        policy = tqc_kwargs.pop("policy")
+        policy_kwargs = tqc_kwargs.pop("policy_kwargs", {})
+        # Need a vec env to instantiate TQC; the env_cfg defines obs/action space
+        env_cfg_for_init = {**cfg["env"], "target_mode": "fixed", "target_ep": 0}
+        tmp_env = make_vec_env(env_cfg_for_init, n_envs=1)
+        model = TQC(
+            policy, tmp_env, verbose=0,
+            policy_kwargs=policy_kwargs,
+            device=device,
+            **tqc_kwargs,
+        )
+        eval_before = {"note": "from-scratch (no baseline to eval)"}
+        for ep in range(8):
+            eval_before[f"EP{ep}"] = {"success_rate": 0.0}
+        eval_before["overall_success_rate"] = 0.0
 
     # Generate LQR demos
     bc_cfg = cfg.get("bc", {})
@@ -96,17 +132,7 @@ def main():
     eps_list = tuple(bc_cfg.get("eps", [4, 5, 6, 7]))
     print(f"\n=== Collecting LQR demos for EPs {eps_list} ===")
     t0 = time.time()
-    # collect_lqr_demos works for EP4/EP6 (in EQ_QPOS dict). Add EP5/EP7 quadrants:
-    # We need to extend EQ_QPOS for all hard EPs we want.
-    # EP5 = UDU = (link1=U, link2=D, link3=U): qpos[1]=0, qpos[2]=-pi (relative goes to pi), qpos[3]=-pi (relative back to 0)
-    # EP7 = UUU: qpos = [0, 0, 0, 0]
-    extra_eqs = {
-        5: np.array([0.0, 0.0, -np.pi, -np.pi]),
-        7: np.array([0.0, 0.0, 0.0, 0.0]),
-    }
-    for k, v in extra_eqs.items():
-        if k not in EQ_QPOS:
-            EQ_QPOS[k] = v
+    # _FULL_EQ populated at module top covers all 8 EPs.
     obs, actions = collect_lqr_demos(cfg["env"], eps_list=eps_list, n_eps_per=n_eps_per)
     print(f"  demos in {time.time()-t0:.1f}s, {len(obs)} transitions")
 

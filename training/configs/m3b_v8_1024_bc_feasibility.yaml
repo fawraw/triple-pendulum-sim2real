@@ -1,0 +1,42 @@
+# Plan B feasibility check: BC-only from scratch with [1024,1024] on all 8 EPs.
+# Run on CT 1018 CPU to verify the architecture can fit the LQR control function
+# before committing cloud time for the full BC+RL run.
+
+stage: M3b_v8_1024_bc_feasibility
+
+# No load_model_path → build fresh TQC
+load_model_path: ""
+
+bc:
+  n_eps_per: 30          # smaller for CT 1018 feasibility (8 × 30 = 240K transitions)
+  eps: [0, 1, 2, 3, 4, 5, 6, 7]
+  n_epochs: 30
+  batch_size: 256
+  lr: 3.0e-4
+
+env:
+  target_mode: fixed       # used only for model instantiation
+  target_ep: 0
+  init_mode: near_target
+  init_noise: 0.05
+  max_episode_steps: 1000
+  fall_grace_steps: 0
+  w_down: 1.0
+  vel_cost_coef: 0.02
+
+# TQC build parameters (used only when from-scratch)
+algo: TQC
+tqc:
+  policy: MlpPolicy
+  learning_rate: 1.0e-4
+  buffer_size: 100_000
+  batch_size: 256
+  tau: 0.005
+  gamma: 0.99
+  train_freq: 1
+  gradient_steps: 1
+  top_quantiles_to_drop_per_net: 2
+  policy_kwargs:
+    net_arch: [1024, 1024]    # ← key change: wider network
+    n_critics: 3
+    n_quantiles: 25
