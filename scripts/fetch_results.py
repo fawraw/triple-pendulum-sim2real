@@ -107,15 +107,9 @@ def delete_gist(gist_id: str, token: str) -> None:
         pass
 
 # ── RunPod helpers ───────────────────────────────────────────────────────────
-def _rp(query: str) -> dict:
-    req = urllib.request.Request(
-        "https://api.runpod.io/graphql",
-        data=json.dumps({"query": query}).encode(),
-        headers={"Authorization": f"Bearer {RUNPOD_API_KEY}", "Content-Type": "application/json"},
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=15) as r:
-        return json.load(r)
+# All RunPod calls use the REST API.  GraphQL `podStop`/`podTerminate` silently
+# return 403 in some auth contexts and were the root cause of the 11-day
+# `tp-fetch-results` runaway in 2026-05-12 → 2026-05-23.
 
 def spawn_pod(gist_id: str, gh_token: str, last: int, milestone: str) -> str:
     milestone_filter = f"and d.get('milestone') == '{milestone}'" if milestone else ""
@@ -153,10 +147,10 @@ with urllib.request.urlopen(req, timeout=15) as r:
     print('updated gist:', r.status)
 "
 sleep 3
-curl -sf -X POST https://api.runpod.io/graphql \\
-  -H 'Authorization: Bearer {RUNPOD_API_KEY}' \\
-  -H 'Content-Type: application/json' \\
-  -d '{{"query":"mutation {{ podStop(input: {{podId: \\"$RUNPOD_POD_ID\\"}}) {{ id }} }}"}}' >/dev/null || true
+# Self-stop via REST API. GraphQL podStop sometimes returns 403 in this
+# auth context — root cause of the 2026-05-12 → 2026-05-23 11-day runaway.
+curl -sf -X POST "https://rest.runpod.io/v1/pods/$RUNPOD_POD_ID/stop" \\
+  -H 'Authorization: Bearer {RUNPOD_API_KEY}' >/dev/null || true
 """
     payload = {
         "name": "tp-fetch-results",
@@ -181,15 +175,22 @@ curl -sf -X POST https://api.runpod.io/graphql \\
         resp = json.load(r)
         return resp["id"]
 
+def _rest_get_pod(pod_id: str) -> dict:
+    req = urllib.request.Request(
+        f"https://rest.runpod.io/v1/pods/{pod_id}",
+        headers={"Authorization": f"Bearer {RUNPOD_API_KEY}"},
+        method="GET",
+    )
+    with urllib.request.urlopen(req, timeout=15) as r:
+        return json.load(r)
+
 def wait_pod_exit(pod_id: str, timeout: int = 300) -> bool:
     start = time.time()
     while time.time() - start < timeout:
         try:
-            r = _rp(f'query {{ pod(input: {{podId: "{pod_id}"}}) {{ desiredStatus runtime {{ uptimeInSeconds }} }} }}')
-            p = r["data"]["pod"]
-            up = (p.get("runtime") or {}).get("uptimeInSeconds", -999)
-            status = p["desiredStatus"]
-            print(f"  [{int(time.time()-start):>3}s] {status} uptime={up}s", end="\r", flush=True)
+            p = _rest_get_pod(pod_id)
+            status = p.get("desiredStatus", "?")
+            print(f"  [{int(time.time()-start):>3}s] {status}", end="\r", flush=True)
             if status == "EXITED":
                 print()
                 return True
@@ -200,8 +201,14 @@ def wait_pod_exit(pod_id: str, timeout: int = 300) -> bool:
     return False
 
 def terminate_pod(pod_id: str) -> None:
+    """Force-stop via REST API (GraphQL podTerminate returns 403 in some auth contexts)."""
     try:
-        _rp(f'mutation {{ podTerminate(input: {{podId: "{pod_id}"}}) }}')
+        req = urllib.request.Request(
+            f"https://rest.runpod.io/v1/pods/{pod_id}/stop",
+            headers={"Authorization": f"Bearer {RUNPOD_API_KEY}"},
+            method="POST",
+        )
+        urllib.request.urlopen(req, timeout=15)
     except Exception:
         pass
 

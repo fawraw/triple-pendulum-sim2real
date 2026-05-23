@@ -82,11 +82,11 @@ spawn_idle_watchdog() {
                 idle=0
             fi
             if [ "$idle" -ge "$threshold_seconds" ]; then
-                echo "[idle-watchdog] GPU idle ${IDLE_SHUTDOWN_MIN}min — requesting podStop" >> /workspace/bootstrap.log
-                curl -s -X POST "https://api.runpod.io/graphql" \
+                echo "[idle-watchdog] GPU idle ${IDLE_SHUTDOWN_MIN}min — requesting podStop via REST" >> /workspace/bootstrap.log
+                # REST endpoint (the GraphQL podStop returns 403 in some auth contexts;
+                # was the root cause of the 2026-05-12 → 2026-05-23 runaway).
+                curl -s -X POST "https://rest.runpod.io/v1/pods/$RUNPOD_POD_ID/stop" \
                     -H "Authorization: Bearer $RUNPOD_API_KEY" \
-                    -H "Content-Type: application/json" \
-                    -d "{\"query\":\"mutation { podStop(input: {podId: \\\"$RUNPOD_POD_ID\\\"}) { id } }\"}" \
                     >> /workspace/bootstrap.log 2>&1
                 exit 0
             fi
@@ -229,17 +229,24 @@ fi
 echo ""
 echo "=== Training exit code: $TRAIN_RC ==="
 
-# 4. Auto-shutdown the pod (RunPod API), or stay alive for SSH inspection.
+# 4. Auto-shutdown the pod (RunPod REST API), or stay alive for SSH inspection.
 # We auto-shutdown even on failure so a crashed run doesn't burn $/hour idle.
+#
+# CRITICAL: use the REST endpoint, not GraphQL.  The GraphQL `podStop` mutation
+# silently returns 403 in some auth contexts (root cause of the 11-day, $71
+# `tp-fetch-results` runaway on 2026-05-12 → 2026-05-23).  REST works reliably.
 if [ "$AUTO_SHUTDOWN" = "1" ]; then
     if [ -n "${RUNPOD_API_KEY:-}" ] && [ -n "${RUNPOD_POD_ID:-}" ]; then
-        echo "[bootstrap] requesting pod shutdown via RunPod API"
-        curl -s -X POST "https://api.runpod.io/graphql" \
-            -H "Authorization: Bearer $RUNPOD_API_KEY" \
-            -H "Content-Type: application/json" \
-            -d "{\"query\":\"mutation { podStop(input: {podId: \\\"$RUNPOD_POD_ID\\\"}) { id } }\"}" \
-            >/dev/null && echo "[bootstrap] shutdown requested" \
-            || echo "[bootstrap] WARN shutdown request failed; pod will stay alive"
+        echo "[bootstrap] requesting pod shutdown via RunPod REST API"
+        http_code=$(curl -s -o /tmp/stop_resp -w "%{http_code}" -X POST \
+            "https://rest.runpod.io/v1/pods/$RUNPOD_POD_ID/stop" \
+            -H "Authorization: Bearer $RUNPOD_API_KEY")
+        if [ "$http_code" = "200" ]; then
+            echo "[bootstrap] shutdown requested (HTTP 200)"
+        else
+            echo "[bootstrap] WARN shutdown request HTTP $http_code: $(cat /tmp/stop_resp 2>/dev/null | head -c 200)"
+            echo "[bootstrap] pod may stay alive — check https://www.runpod.io/console/pods"
+        fi
     else
         echo "[bootstrap] AUTO_SHUTDOWN=1 but RUNPOD_API_KEY/RUNPOD_POD_ID missing; staying alive."
         echo "[bootstrap] Stop manually: https://www.runpod.io/console/pods"
