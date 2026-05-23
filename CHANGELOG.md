@@ -4,6 +4,68 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ---
 
+## 2026-05-23 — Runaway pod fix + M4 env extension + smoke test launched
+
+### Runaway pod RCA + fix (priority 1)
+
+Discovered a fetch pod (`tp-fetch-results`, id `bqqy0y7vxcej3g`) running for
+**11 days** since 2026-05-12 — total cost ~$71 wasted. Pod was the one
+launched by `fetch_results.py` during M3b-v4 results retrieval; its in-pod
+self-stop call used the GraphQL `podStop` mutation, which silently returns
+403 in some auth contexts (we hit the same 403 manually on 2026-05-12).
+RunPod's RP_INIT then kept the container alive until manual intervention.
+
+**Fixes:**
+
+- `scripts/runpod_bootstrap.sh`: idle watchdog + final shutdown switched to
+  `POST https://rest.runpod.io/v1/pods/$ID/stop` with HTTP-code check and
+  WARN logging on non-200.
+- `scripts/fetch_results.py`: in-pod self-stop uses REST, `wait_pod_exit`
+  and `terminate_pod` helpers refactored to REST (GraphQL `_rp` removed).
+- `scripts/runpod_audit.py` NEW: cron-friendly safety auditor; lists all
+  running pods, optionally force-stops any older than `--max-age-hours`.
+  Deployed via `/etc/cron.d/tp-runpod-audit` on CT 1018 (hourly, kills
+  any pod > 12h).
+
+### M4 env extension
+
+`TriplePendulumEnv` now supports `target_mode="transition"`:
+
+- New constructor params: `start_ep`, `transition_success_tol_rad`
+  (default 0.2 rad), `transition_success_steps` (default 200),
+  `transition_bonus` (default 200.0).
+- Reset samples a `(start_ep, target_ep)` pair with `start_ep != target_ep`
+  (or uses explicit values from constructor / `options`). Init places the
+  system near `start_ep`.
+- Angle-based fall detection is disabled until the policy reaches the
+  target tolerance for `transition_success_steps` consecutive steps; this
+  prevents instant termination on an episode where init is far from target.
+- `step()` returns extra info: `start_ep`, `reached_target`,
+  `in_tolerance_steps`. A sparse `transition_bonus` is paid once per
+  episode on first arrival.
+- Obs stays **16-dim** (joint state + target one-hot) — backwards compat
+  with M3 checkpoints; the policy infers start_ep from the initial joint
+  state.
+
+### M4 training pipeline
+
+- `training/train_m4_transitions.py`: `per_transition_eval` rewritten to
+  use `target_mode="transition"` with explicit `start_ep/target_ep` per
+  pair, evaluating arrival rate over the 56 directed transitions.
+- `training/configs/m4_smoke_ddd_uuu.yaml` NEW: single-pair smoke test
+  (DDD → UUU, 200K steps, [256,256], warm-start from M3b CPU 67.5% baseline)
+  — runs on CT 1018 to validate the pipeline before scaling to 56 pairs.
+- `training/train_m3_all_eps.py`: validator now accepts
+  `target_mode="transition"` alongside fixed/random/weighted.
+
+### In flight
+
+- M4 smoke test (`m4_smoke_ddd_uuu.yaml`) running on CT 1018 — ETA ~1.5h,
+  200K steps. Success criterion: warm-started policy can learn the DDD→UUU
+  swing-up from M3b's hold-only baseline.
+
+---
+
 ## 2026-05-14 — M3 closed at 72.5%, moving to M4 transitions
 
 After 7 days of M3 work (10+ training runs, full RL diagnostic, three Stage 2
