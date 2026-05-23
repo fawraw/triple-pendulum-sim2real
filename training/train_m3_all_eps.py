@@ -133,7 +133,7 @@ def _validate_cfg_m3(cfg: dict) -> None:
         raise ValueError("total_timesteps must be a positive number")
     if not isinstance(cfg["env"]["max_episode_steps"], int) or cfg["env"]["max_episode_steps"] <= 0:
         raise ValueError("env.max_episode_steps must be a positive integer")
-    if cfg["env"]["target_mode"] not in ("fixed", "random", "weighted"):
+    if cfg["env"]["target_mode"] not in ("fixed", "random", "weighted", "transition"):
         raise ValueError(f"env.target_mode must be 'fixed', 'random', or 'weighted', got: {cfg['env']['target_mode']!r}")
 
 

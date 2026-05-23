@@ -45,7 +45,12 @@ class TriplePendulumEnv(gym.Env):
                  start_grace_steps: int = 0,
                  w_down: float = 1.0,
                  progress_reward_coef: float = 0.0,
-                 vel_cost_coef: float = 0.05):
+                 vel_cost_coef: float = 0.05,
+                 # M4 transition params: start_ep != target_ep means a swing/transition task
+                 start_ep: int | None = None,
+                 transition_success_tol_rad: float = 0.2,
+                 transition_success_steps: int = 200,
+                 transition_bonus: float = 200.0):
         """
         init_mode:
           - "near_target": start with link angles within `init_noise` of the target EP.
@@ -55,11 +60,19 @@ class TriplePendulumEnv(gym.Env):
           - "random":      start with all link angles uniformly in [-pi, pi].
             Use this once the policy is robust enough.
         target_mode:
-          - "fixed":    target_ep stays constant.
-          - "random":   target_ep resampled uniformly 0..7 on every reset.
-          - "weighted": like random but EP4/EP6 get extra_weight× more episodes.
-            Configure via target_ep_weights env param or hard-coded in env_utils.
+          - "fixed":      target_ep stays constant.
+          - "random":     target_ep resampled uniformly 0..7 on every reset.
+          - "weighted":   like random but EP4/EP6 get extra_weight× more episodes.
+          - "transition": pair (start_ep, target_ep) resampled uniformly with
+                          start_ep != target_ep. Init is around start_ep, the
+                          goal is to drive the system to target_ep. Used in M4.
         init_noise: scale of the uniform noise applied to qpos/qvel at reset (rad / rad/s).
+        start_ep: explicit start EP for "transition" mode (or None to randomise).
+        transition_success_tol_rad: per-link angle tolerance to consider the
+            target EP reached (default 0.2 rad ~= 11.5°).
+        transition_success_steps: consecutive in-tolerance steps needed to
+            declare success and trigger the transition_bonus reward.
+        transition_bonus: sparse positive reward emitted on successful arrival.
         """
         super().__init__()
         self.model = mujoco.MjModel.from_xml_path(str(MODEL_PATH))
@@ -78,9 +91,21 @@ class TriplePendulumEnv(gym.Env):
         self.w_down = float(w_down)
         self.progress_reward_coef = float(progress_reward_coef)
         self.vel_cost_coef = float(vel_cost_coef)
+        # M4 transition params
+        self.start_ep: int | None = int(start_ep) if start_ep is not None else None
+        self.transition_success_tol_rad = float(transition_success_tol_rad)
+        self.transition_success_steps = int(transition_success_steps)
+        self.transition_bonus = float(transition_bonus)
         self._fall_counter = 0
         self._step_count = 0
         self._prev_err: np.ndarray | None = None
+        # Set when the system has been within tolerance of target_ep for
+        # `transition_success_steps` consecutive steps. Once True, the angle-
+        # based fall check re-engages (so the policy must actually HOLD the
+        # target after reaching it).
+        self._reached_target = False
+        self._in_tolerance_counter = 0
+        self._transition_bonus_paid = False
         self.render_mode = render_mode
         self._renderer = None
 
@@ -146,7 +171,12 @@ class TriplePendulumEnv(gym.Env):
         # Immunity window at episode start — gives the policy time to orient
         if self._step_count < self.start_grace_steps:
             return False
-        if self.init_mode == "near_target":
+        # M4 transition mode: angle-based fall is only checked AFTER the policy
+        # has reached the target equilibrium at least once. Otherwise the
+        # episode would always terminate at step 0 (init is far from target).
+        if self.target_mode == "transition" and not self._reached_target:
+            return False
+        if self.init_mode == "near_target" or self.target_mode == "transition":
             err = self._angle_error()
             over = bool(np.any(np.abs(err) > self._fall_thresholds()))
             if over:
@@ -204,11 +234,26 @@ class TriplePendulumEnv(gym.Env):
             w[6] = self.hard_ep_weight
             p = w / w.sum()
             self.target_ep = int(self.np_random.choice(8, p=p))
+        elif self.target_mode == "transition":
+            # Sample a (start, target) pair with start != target.
+            self.start_ep = int(self.np_random.integers(0, 8))
+            tgt = int(self.np_random.integers(0, 7))
+            if tgt >= self.start_ep:
+                tgt += 1
+            self.target_ep = tgt
         if options and "init_mode" in options:
             self.init_mode = str(options["init_mode"])
+        if options and "start_ep" in options:
+            self.start_ep = int(options["start_ep"])
 
         n = float(self.init_noise)
         self.data.qpos[0] = self.np_random.uniform(-n, n)
+
+        # Decide which EP to initialise around. Transition mode and explicit
+        # start_ep both override the default (near_target uses target_ep).
+        init_ep = self.target_ep
+        if self.target_mode == "transition" and self.start_ep is not None:
+            init_ep = self.start_ep
 
         if self.init_mode == "bottom":
             t1, t2, t3 = np.pi, np.pi, np.pi
@@ -216,8 +261,8 @@ class TriplePendulumEnv(gym.Env):
             t1 = self.np_random.uniform(-np.pi, np.pi)
             t2 = self.np_random.uniform(-np.pi, np.pi)
             t3 = self.np_random.uniform(-np.pi, np.pi)
-        else:  # "near_target"
-            t1, t2, t3 = ep_target_angles(self.target_ep)
+        else:  # "near_target" (or transition — initialised around init_ep)
+            t1, t2, t3 = ep_target_angles(init_ep)
 
         # Convert absolute angles back to relative hinge coordinates.
         # MuJoCo hinge2 is parented to pole1, hinge3 to pole2, so:
@@ -229,6 +274,9 @@ class TriplePendulumEnv(gym.Env):
         self._step_count = 0
         self._fall_counter = 0
         self._prev_err = None
+        self._reached_target = False
+        self._in_tolerance_counter = 0
+        self._transition_bonus_paid = False
         mujoco.mj_forward(self.model, self.data)
         self._prev_err = self._angle_error()
         return self._obs(), {}
@@ -239,12 +287,39 @@ class TriplePendulumEnv(gym.Env):
         self.data.ctrl[0] = a
         mujoco.mj_step(self.model, self.data)
         self._step_count += 1
+
+        # Transition success detection: angles within tolerance for N consecutive steps.
+        err = self._angle_error()
+        in_tol = bool(np.all(np.abs(err) < self.transition_success_tol_rad))
+        if in_tol:
+            self._in_tolerance_counter += 1
+            if (not self._reached_target
+                    and self._in_tolerance_counter >= self.transition_success_steps):
+                self._reached_target = True
+        else:
+            self._in_tolerance_counter = 0
+
         obs = self._obs()
         fallen = self._is_fallen()
         reward = self._reward(fallen)
+
+        # Sparse transition bonus: emitted ONCE per episode the first time we
+        # actually arrive at the target (after `transition_success_steps`).
+        if (self._reached_target
+                and not self._transition_bonus_paid
+                and self.transition_bonus > 0.0):
+            reward += self.transition_bonus
+            self._transition_bonus_paid = True
+
         terminated = fallen
         truncated = self._step_count >= self.max_episode_steps
-        return obs, reward, terminated, truncated, {"target_ep": self.target_ep}
+        info = {
+            "target_ep": self.target_ep,
+            "start_ep": self.start_ep if self.start_ep is not None else self.target_ep,
+            "reached_target": self._reached_target,
+            "in_tolerance_steps": self._in_tolerance_counter,
+        }
+        return obs, reward, terminated, truncated, info
 
     def render(self):
         if self.render_mode is None:

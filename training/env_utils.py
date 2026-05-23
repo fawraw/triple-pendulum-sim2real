@@ -33,6 +33,10 @@ def _make_one_env(env_cfg: dict) -> Monitor:
         w_down=float(env_cfg.get("w_down", 1.0)),
         progress_reward_coef=float(env_cfg.get("progress_reward_coef", 0.0)),
         vel_cost_coef=float(env_cfg.get("vel_cost_coef", 0.05)),
+        start_ep=env_cfg.get("start_ep"),  # M4 transition tasks
+        transition_success_tol_rad=float(env_cfg.get("transition_success_tol_rad", 0.2)),
+        transition_success_steps=int(env_cfg.get("transition_success_steps", 200)),
+        transition_bonus=float(env_cfg.get("transition_bonus", 200.0)),
     )
     return Monitor(env)
 
