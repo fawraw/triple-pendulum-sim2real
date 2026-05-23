@@ -86,45 +86,57 @@ def _transition_success(lengths: list[int], max_steps: int) -> float:
 
 
 def per_transition_eval(model, env_cfg: dict, n_per_transition: int = 5) -> dict:
-    """Roll out n_per_transition deterministic episodes for each of the 56 transitions."""
+    """Roll out n_per_transition deterministic episodes for each of the 56 transitions.
+
+    Uses the env's `target_mode='transition'` (added 2026-05-23) which:
+      - Initialises near `start_ep` (passed explicitly per pair).
+      - Disables angle-based fall detection until target is reached at least once.
+      - Reports `info['reached_target']` after `transition_success_steps` in-tolerance steps.
+
+    Success per episode = arrival (`reached_target=True`) before truncation.
+    """
     max_steps = int(env_cfg["max_episode_steps"])
     out: dict[str, float] = {}
+    all_arrivals: list[int] = []
     all_lengths: list[int] = []
 
     for src, dst in ALL_TRANSITIONS:
-        # ALL_TRANSITIONS excludes src == dst, so every transition starts from
-        # one EP and must traverse to a different target. Init near src, then
-        # flip target_ep to dst before the first step so the obs one-hot points
-        # to dst. (Passing options={"target_ep": dst} in reset would change
-        # target_ep BEFORE the angle init, so the env would init near dst —
-        # wrong.)
         lengths = []
-        env = TriplePendulumEnv(
-            target_ep=src,
-            target_mode="fixed",
-            init_mode="near_target",
-            init_noise=0.05,
-            max_episode_steps=max_steps,
-        )
+        arrivals = []
         for trial in range(n_per_transition):
-            env.reset(seed=src * 100 + dst * 10 + trial)
-            env.target_ep = dst                   # switch target after init
-            obs = env._obs()                      # refresh obs with new target one-hot
+            env = TriplePendulumEnv(
+                target_ep=dst,
+                start_ep=src,
+                target_mode="transition",
+                init_mode="near_target",
+                init_noise=float(env_cfg.get("init_noise", 0.05)),
+                max_episode_steps=max_steps,
+                fall_grace_steps=0,
+                transition_success_tol_rad=float(env_cfg.get("transition_success_tol_rad", 0.2)),
+                transition_success_steps=int(env_cfg.get("transition_success_steps", 200)),
+                transition_bonus=0.0,
+            )
+            obs, _ = env.reset(seed=src * 100 + dst * 10 + trial)
             ep_n = 0
             done = trunc = False
+            arrived = False
             while not (done or trunc):
                 action, _ = model.predict(obs, deterministic=True)
-                obs, _, done, trunc, _ = env.step(action)
+                obs, _, done, trunc, info = env.step(action)
+                if info.get("reached_target"):
+                    arrived = True
                 ep_n += 1
             lengths.append(ep_n)
-        env.close()
+            arrivals.append(1 if arrived else 0)
+            env.close()
 
         key = f"ep{src}to{dst}"
-        out[f"{key}_success_rate"] = _transition_success(lengths, max_steps)
+        out[f"{key}_success_rate"] = float(np.mean(arrivals))
         out[f"{key}_length_mean"] = float(np.mean(lengths))
+        all_arrivals.extend(arrivals)
         all_lengths.extend(lengths)
 
-    out["overall_success_rate"] = _transition_success(all_lengths, max_steps)
+    out["overall_success_rate"] = float(np.mean(all_arrivals))
     out["overall_length_mean"] = float(np.mean(all_lengths))
     return out
 

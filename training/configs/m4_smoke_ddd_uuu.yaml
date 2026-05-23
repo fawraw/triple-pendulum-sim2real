@@ -1,0 +1,53 @@
+# M4 smoke test — single transition DDD → UUU (the classic swing-up).
+# Validates the env + training pipeline before scaling to all 56 transitions.
+# Warm-start from M3b-v6 cloud 72.5%. CPU-friendly small budget.
+
+stage: M4_smoke_DDD_UUU
+
+# Warm-start from the M3b-v6 cloud final checkpoint (NOTE: this lives on the
+# RunPod tp-data volume; for CT 1018 smoke we use the local 67.5% [256,256]
+# baseline. Train_m4_transitions resolves relative paths from project root.)
+pretrained_policy: "checkpoints/m3_all_eps_20260509_162351/best_model.zip"
+
+env:
+  target_ep: 7        # UUU
+  start_ep: 0         # DDD — overrides init even with target_mode="fixed"
+  target_mode: fixed
+  init_mode: near_target
+  init_noise: 0.05
+  max_episode_steps: 2000           # long enough for swing-up
+  fall_grace_steps: 0
+  w_down: 1.0
+  vel_cost_coef: 0.02
+  transition_success_tol_rad: 0.3   # generous tolerance for first smoke
+  transition_success_steps: 100     # 2s at 50Hz of in-tolerance to count as arrived
+  transition_bonus: 200.0
+
+algo: TQC
+total_timesteps: 200_000   # smoke budget — ~1.5h on CT 1018 CPU
+n_envs: 4
+
+tqc:
+  policy: MlpPolicy
+  learning_rate: 1.0e-4
+  buffer_size: 200_000
+  batch_size: 256
+  tau: 0.005
+  gamma: 0.99
+  train_freq: 1
+  gradient_steps: 4
+  top_quantiles_to_drop_per_net: 2
+  policy_kwargs:
+    net_arch: [256, 256]
+    n_critics: 3
+    n_quantiles: 25
+
+callbacks:
+  rollout_log_freq: 5_000
+  checkpoint_freq:  50_000
+
+eval:
+  freq:            25_000
+  n_episodes:      8       # only one transition to eval
+  deterministic:   true
+  final_n_episodes: 56     # 1 trial per pair × 56 = 56 (per_transition_eval cares about 56 anyway)

@@ -249,10 +249,10 @@ class TriplePendulumEnv(gym.Env):
         n = float(self.init_noise)
         self.data.qpos[0] = self.np_random.uniform(-n, n)
 
-        # Decide which EP to initialise around. Transition mode and explicit
-        # start_ep both override the default (near_target uses target_ep).
+        # Decide which EP to initialise around. Any explicit start_ep (set via
+        # constructor or `options`) overrides the default (which is target_ep).
         init_ep = self.target_ep
-        if self.target_mode == "transition" and self.start_ep is not None:
+        if self.start_ep is not None and self.start_ep != self.target_ep:
             init_ep = self.start_ep
 
         if self.init_mode == "bottom":
