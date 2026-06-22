@@ -9,7 +9,7 @@ shared-weight network avoid biasing the actor toward EP4/EP6 only.
 Run from project root:
 
     MUJOCO_GL=osmesa python -m training.train_bc_only \\
-        --config training/configs/m3b_stage3a_bc_only.yaml
+        --config training/configs/m3b_stage3a_bc_only_local.yaml
 """
 from __future__ import annotations
 
@@ -26,6 +26,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from sim.envs.triple_pendulum_env import TriplePendulumEnv  # noqa: E402
+from training.eval_utils import success_rate  # noqa: E402
 from training.train_bc_then_rl import (  # noqa: E402
     collect_lqr_demos,
     bc_pretrain,
@@ -72,7 +73,7 @@ def per_ep_eval(model, n_per_ep=10, max_steps=1000, init_noise=0.05):
                 ep_n += 1
             lengths.append(ep_n)
             rewards.append(ep_r)
-        succ = sum(1 for l in lengths if l >= 800) / n_per_ep
+        succ = success_rate(lengths, max_steps, 0.8)
         out[f"EP{ep}"] = {
             "success_rate": float(succ),
             "mean_length": float(np.mean(lengths)),
@@ -81,7 +82,7 @@ def per_ep_eval(model, n_per_ep=10, max_steps=1000, init_noise=0.05):
         }
         overall_lengths.extend(lengths)
         print(f"EP{ep}: succ={succ:.2f}  lens={lengths}  mean={np.mean(lengths):.0f}")
-    overall = sum(1 for l in overall_lengths if l >= 800) / len(overall_lengths)
+    overall = success_rate(overall_lengths, max_steps, 0.8)
     out["overall_success_rate"] = float(overall)
     print(f"\nOverall: {overall*100:.1f}%")
     return out

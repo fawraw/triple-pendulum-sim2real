@@ -3,6 +3,7 @@ import numpy as np
 import pytest
 
 from sim.envs.triple_pendulum_env import TriplePendulumEnv, ep_target_angles
+from sim.equilibria import EP_NAMES, ep_name
 
 
 @pytest.fixture
@@ -98,9 +99,9 @@ def test_reset_options_overrides_target():
 
 @pytest.mark.parametrize("ep,bits", [
     (0, [np.pi, np.pi, np.pi]),    # DDD
-    (1, [0.0, np.pi, np.pi]),       # DDU (link 1 up)
-    (2, [np.pi, 0.0, np.pi]),       # DUD
-    (4, [np.pi, np.pi, 0.0]),       # UDD (link 3 up)
+    (1, [0.0, np.pi, np.pi]),       # UDD (link 1 up)
+    (2, [np.pi, 0.0, np.pi]),       # DUD (link 2 up)
+    (4, [np.pi, np.pi, 0.0]),       # DDU (link 3 up)
     (7, [0.0, 0.0, 0.0]),           # UUU
 ])
 def test_ep_target_angles_bit_encoding(ep, bits):
@@ -111,6 +112,20 @@ def test_ep_target_angles_bit_encoding(ep, bits):
 def test_all_8_eps_distinct():
     encodings = [tuple(ep_target_angles(ep)) for ep in range(8)]
     assert len(set(encodings)) == 8, "8 EPs must produce 8 distinct angle tuples"
+
+
+def test_ep_names_canonical():
+    # Single source of truth, read base->tip. Locks the convention so the
+    # historically-wrong labels (env docstring, M4 EP_NAMES) cannot creep back.
+    assert EP_NAMES == ["DDD", "UDD", "DUD", "UUD", "DDU", "UDU", "DUU", "UUU"]
+
+
+def test_ep_name_consistent_with_target_angles():
+    # name[i] == 'U' iff link i is targeted up (absolute angle 0).
+    for ep in range(8):
+        angles = ep_target_angles(ep)
+        expected = "".join("U" if np.isclose(a, 0.0) else "D" for a in angles)
+        assert ep_name(ep) == expected == EP_NAMES[ep], f"EP{ep} naming mismatch"
 
 
 # ---------------------------------------------------------------------------

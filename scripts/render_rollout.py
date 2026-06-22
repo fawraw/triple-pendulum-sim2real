@@ -26,8 +26,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from sim.envs.triple_pendulum_env import TriplePendulumEnv  # noqa: E402
+from sim.equilibria import EP_NAMES  # noqa: E402
 
-EP_NAMES = ["DDD", "DDU", "DUD", "DUU", "UDD", "UDU", "UUD", "UUU"]
 FPS = 50
 
 

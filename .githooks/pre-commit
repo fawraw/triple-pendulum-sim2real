@@ -26,7 +26,30 @@ if [ -n "$staged" ]; then
     fi
 fi
 
-# ---- 2. Delegate to global Lab Perso hook for content scanning ----
+# ---- 2. Scan staged content for secret-like literals ----
+# Inlined (was previously delegated to $HOME/.git-hooks/pre-commit, which does
+# not exist on every clone -- so the scan silently never ran). Only the added
+# lines of staged files are scanned. Placeholders (YOUR_*, <...>, example) are
+# ignored so the n8n template JSONs do not trip it.
+added=$(git diff --cached --no-color -U0 --diff-filter=AM 2>/dev/null \
+        | grep '^+' | grep -v '^+++' || true)
+if [ -n "$added" ]; then
+    # Telegram bot token | RunPod key | PEM private key block | AWS access key |
+    # *_SECRET/_TOKEN/_PASSWORD = "literal".
+    secret_re='([0-9]{8,10}:[A-Za-z0-9_-]{35})|(rpa_[A-Za-z0-9]{20,})|(-----BEGIN [A-Z ]*PRIVATE KEY-----)|(AKIA[0-9A-Z]{16})|((SECRET|TOKEN|PASSWORD|API_KEY)["'\'' ]*[:=]["'\'' ]*[A-Za-z0-9/_+-]{12,})'
+    hits=$(printf '%s\n' "$added" \
+           | grep -nEi "$secret_re" \
+           | grep -vEi 'YOUR_|<[a-z_]+>|placeholder|example|os\.environ|getenv|\$\{?env' || true)
+    if [ -n "$hits" ]; then
+        echo "ERROR pre-commit: staged content looks like it contains a secret:"
+        echo "$hits" | sed 's/^/  /'
+        echo ""
+        echo "Move it to an env var / out-of-repo file, or commit with --no-verify if it is a false positive."
+        exit 1
+    fi
+fi
+
+# ---- 3. Also delegate to the global Lab Perso hook if present ----
 GLOBAL_HOOK="$HOME/.git-hooks/pre-commit"
 if [ -x "$GLOBAL_HOOK" ] && [ "$GLOBAL_HOOK" != "$0" ]; then
     "$GLOBAL_HOOK" "$@"

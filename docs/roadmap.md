@@ -49,9 +49,9 @@ Milestones are sequential: each is a prerequisite for the next. Acceptance crite
 
 **Goal:** A single TQC policy that reads a target EP one-hot from the observation and stabilizes any of the 8 equilibria.
 
-**Acceptance:** `overall_success_rate ≥ 0.75` over 80 rollouts (10 per EP).
+**Acceptance:** `overall_success_rate ≥ 0.75` over 80 rollouts (10 per EP). This 0.75 is the canonical threshold (matches the code and `pipeline_stages.json`); if any wiki page shows 0.80, the code/pipeline value wins.
 
-**Status:** Partial. M3 baseline (400K steps): EP0=100%, EP1=100%, EP2=50%, EP3=80%, EP4–EP7 = 0–10%. Overall: 42.5%.
+**Status:** Closed at 72.5% (M3b-v6 cloud, 2026-05-14) — all 8 EPs non-zero in random mode (baseline was 42.5% at 400K steps). The 0.75 threshold was an internal goal and was not met; 72.5% is accepted as the scientific milestone (every equilibrium stabilized at least once). Caveat: the 72.5% run lived on the RunPod `tp-data` volume and is not in the persistent MLflow (best reproducible run there is 67.5%).
 
 **Pipeline:** M3b (2M steps, [256,256]) → if `overall_success_rate < 0.75` → M3c (4M steps, [512,512]). Automated via n8n.
 
@@ -65,7 +65,9 @@ Milestones are sequential: each is a prerequisite for the next. Acceptance crite
 
 **Acceptance:** ≥ 80% success rate aggregated over all 56 transitions.
 
-**Notes:** Requires swing-up in addition to stabilization. Warm-start from the best M3b/M3c checkpoint via `pretrained_policy` in the M4 config.
+**Status:** Not started for the full 56-transition run. A single-transition smoke (DDD→UUU, 200K steps) ran 2026-05-23 to validate the env + pipeline; its 56-transition `overall_success_rate` was 0% but that aggregate is uninformative for a single-transition run (it scores 55 transitions never trained). The trained pair is now logged separately as `final_trained_transition_success_rate`.
+
+**Notes:** Requires swing-up in addition to stabilization. Warm-start from the best M3b/M3c checkpoint via `pretrained_policy` in the M4 config. The full config trains in `target_mode: transition` to match `per_transition_eval`.
 
 ---
 

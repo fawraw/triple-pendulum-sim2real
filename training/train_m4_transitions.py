@@ -41,12 +41,12 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from sim.envs.triple_pendulum_env import TriplePendulumEnv  # noqa: E402
-from training.env_utils import make_vec_env  # noqa: E402
+from sim.equilibria import EP_NAMES  # noqa: E402
+from training.env_utils import make_vec_env, seed_everything  # noqa: E402
+from training.eval_utils import success_rate  # noqa: E402
 from training.mlflow_setup import init_mlflow  # noqa: E402
 from training.mlflow_safe import safe_artifact, safe_tag  # noqa: E402
 from training.pipeline_notifier import notify as pipeline_notify  # noqa: E402
-
-EP_NAMES = ["DDD", "DDU", "DUD", "DUU", "UDD", "UDU", "UUD", "UUU"]
 
 # 56 directed transitions (src != dst)
 ALL_TRANSITIONS = [(src, dst) for src in range(8) for dst in range(8) if src != dst]
@@ -82,7 +82,7 @@ class MLflowRolloutLogger(BaseCallback):
 
 def _transition_success(lengths: list[int], max_steps: int) -> float:
     """Success = episode held target for >= 50% of max_steps."""
-    return float(np.mean([l >= 0.5 * max_steps for l in lengths]))
+    return success_rate(lengths, max_steps, frac=0.5)
 
 
 def per_transition_eval(model, env_cfg: dict, n_per_transition: int = 5) -> dict:
@@ -190,6 +190,7 @@ def main(cfg_path: str) -> None:
     init_mlflow()
     run_name = f"m4_transitions_{time.strftime('%Y%m%d_%H%M%S')}"
 
+    seed = seed_everything(cfg.get("seed"))
     env_cfg = cfg["env"]
     total_timesteps = int(cfg["total_timesteps"])
     n_envs = int(cfg.get("n_envs", 1))
@@ -208,10 +209,12 @@ def main(cfg_path: str) -> None:
     if pretrained:
         print(f"Loading pretrained policy: {pretrained}")
         model = TQC.load(pretrained, env=train_env, device=device, **tqc_kwargs)
+        if seed is not None:
+            model.set_random_seed(seed)
     else:
         model = TQC(policy, train_env, verbose=0,
                     tensorboard_log=str(ROOT / "runs" / run_name),
-                    policy_kwargs=policy_kwargs, device=device, **tqc_kwargs)
+                    policy_kwargs=policy_kwargs, device=device, seed=seed, **tqc_kwargs)
     actual_device = str(model.device)
 
     rollout_cb = MLflowRolloutLogger(log_freq=int(cb_cfg.get("rollout_log_freq", 10_000)))
@@ -238,6 +241,7 @@ def main(cfg_path: str) -> None:
         mlflow.log_param("total_timesteps", total_timesteps)
         mlflow.log_param("n_envs", n_envs)
         mlflow.log_param("device", actual_device)
+        mlflow.log_param("seed", seed if seed is not None else "none")
         mlflow.log_param("pretrained_policy", pretrained or "none")
         mlflow.log_param("git_commit", _git_commit())
 
@@ -279,6 +283,21 @@ def main(cfg_path: str) -> None:
 
         for k, v in metrics.items():
             mlflow.log_metric(f"final_{k}", v)
+
+        # Single-transition smoke (target_mode=fixed): the 56-transition overall
+        # is uninformative because it scores 55 transitions the policy never
+        # trained on. Surface the trained pair's own success rate so the smoke
+        # result is interpretable (this was the cause of the misleading 0%).
+        if str(env_cfg.get("target_mode")) == "fixed" and env_cfg.get("start_ep") is not None:
+            src = int(env_cfg["start_ep"])
+            dst = int(env_cfg.get("target_ep", 7))
+            trained_sr = metrics.get(f"ep{src}to{dst}_success_rate")
+            if trained_sr is not None:
+                mlflow.log_metric("final_trained_transition_success_rate", trained_sr)
+                mlflow.log_param("trained_transition", f"{EP_NAMES[src]}->{EP_NAMES[dst]}")
+                print(f"  [smoke] trained transition {EP_NAMES[src]}->{EP_NAMES[dst]}: "
+                      f"success={trained_sr:.2f}  (the 56-transition overall below is "
+                      f"uninformative for a single-transition run)")
 
         print(f"\nDONE in {elapsed:.0f}s  overall_success_rate={metrics['overall_success_rate']:.3f}")
         for src, dst in ALL_TRANSITIONS:

@@ -36,7 +36,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from sim.envs.triple_pendulum_env import TriplePendulumEnv  # noqa: E402
-from training.env_utils import make_vec_env  # noqa: E402
+from training.env_utils import make_vec_env, seed_everything  # noqa: E402
+from training.eval_utils import success_rate  # noqa: E402
 from training.mlflow_setup import init_mlflow  # noqa: E402
 from training.mlflow_safe import safe_artifact, safe_tag  # noqa: E402
 from training.pipeline_notifier import notify as pipeline_notify  # noqa: E402
@@ -103,16 +104,13 @@ def per_ep_eval(model, env_cfg: dict, n_per_ep: int = 10) -> dict:
             lengths.append(ep_n)
         out[f"ep{ep}_reward_mean"] = float(np.mean(rewards))
         out[f"ep{ep}_length_mean"] = float(np.mean(lengths))
-        out[f"ep{ep}_success_rate"] = float(np.mean([
-            l >= int(0.8 * cfg["max_episode_steps"]) for l in lengths
-        ]))
+        out[f"ep{ep}_success_rate"] = success_rate(lengths, int(cfg["max_episode_steps"]), 0.8)
         overall_rewards.extend(rewards)
         overall_lengths.extend(lengths)
     out["overall_reward_mean"] = float(np.mean(overall_rewards))
     out["overall_length_mean"] = float(np.mean(overall_lengths))
-    out["overall_success_rate"] = float(np.mean([
-        l >= int(0.8 * env_cfg["max_episode_steps"]) for l in overall_lengths
-    ]))
+    out["overall_success_rate"] = success_rate(
+        overall_lengths, int(env_cfg["max_episode_steps"]), 0.8)
     return out
 
 
@@ -133,8 +131,11 @@ def _validate_cfg_m3(cfg: dict) -> None:
         raise ValueError("total_timesteps must be a positive number")
     if not isinstance(cfg["env"]["max_episode_steps"], int) or cfg["env"]["max_episode_steps"] <= 0:
         raise ValueError("env.max_episode_steps must be a positive integer")
-    if cfg["env"]["target_mode"] not in ("fixed", "random", "weighted", "transition"):
-        raise ValueError(f"env.target_mode must be 'fixed', 'random', or 'weighted', got: {cfg['env']['target_mode']!r}")
+    allowed_modes = ("fixed", "random", "weighted", "transition")
+    if cfg["env"]["target_mode"] not in allowed_modes:
+        raise ValueError(
+            f"env.target_mode must be one of {allowed_modes}, "
+            f"got: {cfg['env']['target_mode']!r}")
 
 
 def _git_commit() -> str:
@@ -152,6 +153,7 @@ def main(cfg_path: str) -> None:
     init_mlflow()
     run_name = f"m3_all_eps_{time.strftime('%Y%m%d_%H%M%S')}"
 
+    seed = seed_everything(cfg.get("seed"))
     env_cfg = cfg["env"]
     total_timesteps = int(cfg["total_timesteps"])
     n_envs = int(cfg.get("n_envs", 1))
@@ -183,6 +185,8 @@ def main(cfg_path: str) -> None:
                           if k in {"learning_rate", "buffer_size", "batch_size",
                                    "tau", "gamma", "train_freq", "gradient_steps"}}
         model = TQC.load(resolved, env=train_env, device=device, custom_objects=custom_objects)
+        if seed is not None:
+            model.set_random_seed(seed)
     else:
         model = TQC(
             policy,
@@ -191,6 +195,7 @@ def main(cfg_path: str) -> None:
             tensorboard_log=str(ROOT / "runs" / run_name),
             policy_kwargs=policy_kwargs,
             device=device,
+            seed=seed,
             **tqc_kwargs,
         )
     actual_device = str(model.device)
@@ -222,6 +227,7 @@ def main(cfg_path: str) -> None:
         mlflow.log_param("total_timesteps", total_timesteps)
         mlflow.log_param("n_envs", n_envs)
         mlflow.log_param("device", actual_device)
+        mlflow.log_param("seed", seed if seed is not None else "none")
         mlflow.log_param("git_commit", _git_commit())
         if load_model_path:
             mlflow.log_param("load_model_path", load_model_path)
