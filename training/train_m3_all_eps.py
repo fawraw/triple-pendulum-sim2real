@@ -37,6 +37,7 @@ sys.path.insert(0, str(ROOT))
 
 from sim.envs.triple_pendulum_env import TriplePendulumEnv  # noqa: E402
 from training.env_utils import make_vec_env, seed_everything  # noqa: E402
+from training.eval_utils import success_rate  # noqa: E402
 from training.mlflow_setup import init_mlflow  # noqa: E402
 from training.mlflow_safe import safe_artifact, safe_tag  # noqa: E402
 from training.pipeline_notifier import notify as pipeline_notify  # noqa: E402
@@ -103,16 +104,13 @@ def per_ep_eval(model, env_cfg: dict, n_per_ep: int = 10) -> dict:
             lengths.append(ep_n)
         out[f"ep{ep}_reward_mean"] = float(np.mean(rewards))
         out[f"ep{ep}_length_mean"] = float(np.mean(lengths))
-        out[f"ep{ep}_success_rate"] = float(np.mean([
-            l >= int(0.8 * cfg["max_episode_steps"]) for l in lengths
-        ]))
+        out[f"ep{ep}_success_rate"] = success_rate(lengths, int(cfg["max_episode_steps"]), 0.8)
         overall_rewards.extend(rewards)
         overall_lengths.extend(lengths)
     out["overall_reward_mean"] = float(np.mean(overall_rewards))
     out["overall_length_mean"] = float(np.mean(overall_lengths))
-    out["overall_success_rate"] = float(np.mean([
-        l >= int(0.8 * env_cfg["max_episode_steps"]) for l in overall_lengths
-    ]))
+    out["overall_success_rate"] = success_rate(
+        overall_lengths, int(env_cfg["max_episode_steps"]), 0.8)
     return out
 
 

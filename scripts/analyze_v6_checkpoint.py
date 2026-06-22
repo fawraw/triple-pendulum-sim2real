@@ -32,6 +32,7 @@ sys.path.insert(0, str(ROOT))
 
 from sb3_contrib import TQC
 from sim.envs.triple_pendulum_env import TriplePendulumEnv
+from training.eval_utils import success_threshold
 
 
 CKPT_DIR = ROOT / "checkpoints" / "m3_all_eps_20260512_204421"
@@ -124,7 +125,7 @@ def rollout_with_trace(model, ep, seed, K=None, x_eq=None, max_steps=1000):
         if done or trunc:
             break
     survived = len(actions)
-    success = survived >= 800
+    success = survived >= success_threshold(env.max_episode_steps, 0.8)
     return {
         "seed": seed,
         "survived": survived,

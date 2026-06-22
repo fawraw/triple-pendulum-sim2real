@@ -43,6 +43,7 @@ sys.path.insert(0, str(ROOT))
 from sim.envs.triple_pendulum_env import TriplePendulumEnv  # noqa: E402
 from sim.equilibria import EP_NAMES  # noqa: E402
 from training.env_utils import make_vec_env, seed_everything  # noqa: E402
+from training.eval_utils import success_rate  # noqa: E402
 from training.mlflow_setup import init_mlflow  # noqa: E402
 from training.mlflow_safe import safe_artifact, safe_tag  # noqa: E402
 from training.pipeline_notifier import notify as pipeline_notify  # noqa: E402
@@ -81,7 +82,7 @@ class MLflowRolloutLogger(BaseCallback):
 
 def _transition_success(lengths: list[int], max_steps: int) -> float:
     """Success = episode held target for >= 50% of max_steps."""
-    return float(np.mean([l >= 0.5 * max_steps for l in lengths]))
+    return success_rate(lengths, max_steps, frac=0.5)
 
 
 def per_transition_eval(model, env_cfg: dict, n_per_transition: int = 5) -> dict:

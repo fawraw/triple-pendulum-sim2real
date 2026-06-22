@@ -35,6 +35,7 @@ from sb3_contrib import TQC
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from sim.envs.triple_pendulum_env import TriplePendulumEnv  # noqa: E402
+from training.eval_utils import success_threshold  # noqa: E402
 from training.train_m3_all_eps import main as rl_train_main  # noqa: E402
 
 
@@ -124,7 +125,7 @@ def collect_lqr_demos(env_cfg, eps_list=(4, 6), n_eps_per=100, max_steps=1000):
                 survived = step + 1
                 if done or trunc:
                     break
-            if survived >= 800:
+            if survived >= success_threshold(max_steps, 0.8):
                 success_count += 1
         print(f"[demos] EP{ep}: {success_count}/{n_eps_per} LQR successes, "
               f"{len(all_obs)} transitions total so far")
