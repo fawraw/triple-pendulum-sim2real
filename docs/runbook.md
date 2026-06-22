@@ -155,7 +155,25 @@ Commit + push + pull on CT 1018.
 | `N8N_PIPELINE_SECRET` | same env file (consumed by training scripts), AND n8n Code node `PIPELINE_SECRET` | rotate both atomically; mismatch → all training notifications rejected |
 | Telegram bot token | n8n Code node `TELEGRAM_BOT_URL`; optional `TELEGRAM_FALLBACK_BOT_TOKEN` in `launcher.env` | revoke via @BotFather, get new token, update both places |
 
-After updating n8n, also re-sync via the script in `scripts/sync_n8n_workflow.py` (TODO: write this script — currently a manual `python3 -m` block in this repo's history).
+After updating n8n, re-sync via `scripts/sync_n8n_workflow.py` (fills the
+`YOUR_*` placeholders from env vars, then imports). **Do NOT edit
+`workflow_entity.nodes` directly in the sqlite DB** — the running n8n keeps an
+authoritative in-memory/compiled copy and ignores raw DB edits (verified
+2026-06-22). Use n8n's own import path so the change takes effect:
+
+```bash
+PIPELINE_SECRET=... LAUNCHER_SECRET=... TELEGRAM_BOT_TOKEN=... \
+RUNPOD_API_KEY=... RUNPOD_POD_ID=... \
+  python3 scripts/sync_n8n_workflow.py n8n/triple_pendulum_pipeline.json --out /tmp/wf.json
+# on the n8n host (CT 1003), as the n8n user (root, HOME=/):
+sudo HOME=/ n8n import:workflow --input=/tmp/wf.json
+sudo systemctl restart n8n            # re-registers webhooks with the new code
+shred -u /tmp/wf.json
+```
+
+The live n8n DB on CT 1003 is `/.n8n/database.sqlite` (HOME=/), **not**
+`/root/.n8n` (stale). The two pendulum workflows are already imported and
+active (`WwwkbHr5hu2Xeiwy` orchestrator, `FEJgfI95pbpK9i6R` bot).
 
 ### Check a single training's progress
 
