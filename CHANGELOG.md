@@ -4,6 +4,52 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ---
 
+## 2026-06-22 — Multi-dimension audit remediation
+
+Fixes from a read-only audit of code, ML methodology, infra, pipeline, security
+and docs.
+
+### Correctness / reproducibility
+
+- **EP naming unified.** `sim/equilibria.py` is now the single source of truth
+  (`ep_target_angles`, `ep_name`, `EP_NAMES`). The env docstring and
+  `train_m4` `EP_NAMES` were wrong vs the actual angle computation. Canonical
+  (base→tip, 1=Up): EP1=UDD, EP3=UUD, EP4=DDU, EP6=DUU. README table corrected.
+- **Training seed propagated.** `env_utils.seed_everything` + `TQC(seed=...)` /
+  `model.set_random_seed` across M2/M3/M4, logged to MLflow, `seed: 0` added to
+  the canonical configs. Runs were previously non-reproducible.
+- **Single success criterion.** `training/eval_utils.success_rate/threshold`
+  replaces the literal `800` hardcoded in 4 places (which assumed a 1000-step
+  budget) and the two divergent `frac*max` expressions.
+
+### Pipeline
+
+- **M3b stage key** `M3b_v3` → `M3b` so the post-run notification matches the
+  n8n router instead of falling through to HUMAN_REVIEW (this had broken the
+  M3b→M4 auto-launch).
+
+### M4
+
+- **Smoke is now interpretable.** A single-transition run (target_mode=fixed)
+  logs `final_trained_transition_success_rate` for the trained pair; the
+  56-transition `overall` is uninformative for such a run (the 2026-05-23 0%).
+- `m4_transitions_tqc.yaml`: corrected obs-dim comment (16-dim, no source
+  one-hot) and set `target_mode: transition` to match `per_transition_eval`.
+
+### Security / hygiene
+
+- Pre-commit hook: inlined the secret-content scan (it had delegated to a
+  global hook absent on this clone) and activated `core.hooksPath`.
+
+### Docs
+
+- README/roadmap: M3 marked closed at 72.5% with the MLflow-traceability
+  caveat; M4 marked "smoke ran, full run pending"; `results/` "committed"
+  claim corrected (runtime output, not tracked); acceptance threshold 0.75
+  flagged as canonical (the wiki's 0.80 is wrong).
+
+---
+
 ## 2026-05-23 — Runaway pod fix + M4 env extension + smoke test launched
 
 ### Runaway pod RCA + fix (priority 1)

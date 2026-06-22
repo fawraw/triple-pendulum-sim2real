@@ -110,8 +110,8 @@ See [n8n-Orchestration](https://github.com/fawraw/triple-pendulum-sim2real/wiki/
 | 0. Literature gap confirmed | ✅ | 2026-05-08 |
 | 1. MuJoCo model, 3 links on cart | ✅ | 2026-05-08 |
 | 2. Stabilize UUU in sim (TQC) | 🟡 partial | 2026-05-08 |
-| 3. All 8 EPs stabilized in sim | ✅ **Closed at 72.5%** (M3b-v6 cloud) — first triple-pendulum policy with all 8 equilibria non-zero in random mode. The 75% threshold was an internal goal; the scientific milestone is met. | 2026-05-14 |
-| 4. 56 transitions in sim | 🟡 **Starting now** — warm-start from M3b-v6 (72.5%), env extension for transitions, longer episodes | 2026-05-14 |
+| 3. All 8 EPs stabilized in sim | ✅ **Closed at 72.5%** (M3b-v6 cloud) — first triple-pendulum policy with all 8 equilibria non-zero in random mode. The 75% threshold was an internal goal; the scientific milestone is met. _Caveat: this run lived on the RunPod `tp-data` volume and was never logged to the persistent MLflow on CT 1016 (best reproducible run there is 67.5%); the 72.5% checkpoint is not currently re-evaluable._ | 2026-05-14 |
+| 4. 56 transitions in sim | 🟡 **smoke ran, full run pending** — a single-transition smoke (DDD→UUU, 200K steps) ran 2026-05-23. Its 56-transition `overall_success_rate` was 0%, but that metric is **uninformative for a single-transition run** (it scores 55 transitions the policy never trained on); the trained pair is now logged separately as `final_trained_transition_success_rate`. The full 56-transition run is the next step. | 2026-05-23 |
 | 5. Domain randomization | ⬜ | |
 | 6. Hardware v1 assembled | ⬜ | |
 | 7. First Sim2Real swing-up | ⬜ | |
@@ -126,9 +126,9 @@ See [n8n-Orchestration](https://github.com/fawraw/triple-pendulum-sim2real/wiki/
 | EP | Config | Best baseline (M3c, 67.5%) | **M3b-v6 cloud [512,512]** | Delta |
 |:--:|:------:|---:|---:|---:|
 | 0 | DDD | ~ | **100%** | = |
-| 1 | DDU | ~ | **100%** | = |
+| 1 | UDD | ~ | **100%** | = |
 | 2 | DUD | 100% | **100%** | = |
-| 3 | DUU | 90% | **90%** | = |
+| 3 | UUD | 90% | **90%** | = |
 | **4** | **DDU** | **0%** | **30%** | **▲▲▲** |
 | 5 | UDU | 80% | **80%** | = |
 | **6** | **DUU** | **0%** | **40%** | **▲▲▲** |
@@ -276,7 +276,7 @@ docs/
   launcher_api.service    Systemd unit template (KillMode=process)
   literature/             Annotated bibliography
 tests/                    pytest unit tests (env, notifier, stages, launcher, m4)
-results/                  Per-run JSON snapshots from pipeline_notifier (committed)
+results/                  Per-run JSON snapshots from pipeline_notifier (runtime output, not committed)
 CHANGELOG.md              Dated changelog
 .githooks/
   pre-commit              Secret-pattern scanner, chains to global Lab Perso hook
@@ -285,9 +285,9 @@ assets/                   Figures and demo media
 
 ## Reproducibility
 
-- Every training run is logged to MLflow with code commit hash, seed, full config, learning curves, and final eval metrics.
+- Every training run is logged to MLflow with code commit hash, seed (now fixed and logged), full config, learning curves, and final eval metrics. The durable record of a run is its MLflow entry plus the shipped checkpoint.
 - MuJoCo XML files are versioned alongside training scripts.
-- Pipeline state JSON files in `results/` are committed for permanent record (without secrets — see [`pipeline_notifier.py`](training/pipeline_notifier.py)).
+- Per-run JSON snapshots are written to `results/` at runtime on the training host (without secrets — see [`pipeline_notifier.py`](training/pipeline_notifier.py)); they are not committed to git.
 - Hardware BOM, firmware, CAD will be released with the paper.
 
 ## Citation (placeholder)
