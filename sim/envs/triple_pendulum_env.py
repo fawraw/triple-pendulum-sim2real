@@ -4,11 +4,12 @@ Observation: [x, dx, theta1, dtheta1, theta2, dtheta2, theta3, dtheta3, target_i
 Action: [u] continuous in [-1, 1], scaled to motor force by the XML actuator gear.
 Reward: shaped to encourage convergence toward the target equilibrium point.
 
-The 8 equilibrium points are encoded as 3-bit (link Up=1 / Down=0) configurations:
-    EP0 = DDD, EP1 = DDU, EP2 = DUD, EP3 = DUU,
-    EP4 = UDD, EP5 = UDU, EP6 = UUD, EP7 = UUU
-where the bit order is (theta1, theta2, theta3) with U meaning the link points up
-(theta = 0) and D meaning it points down (theta = pi) in absolute world frame.
+The 8 equilibrium points are encoded as 3-bit (link Up=1 / Down=0) configurations.
+Bit i encodes link i+1 and names are read base->tip (see sim.equilibria):
+    EP0 = DDD, EP1 = UDD, EP2 = DUD, EP3 = UUD,
+    EP4 = DDU, EP5 = UDU, EP6 = DUU, EP7 = UUU
+with U meaning the link points up (theta = 0) and D meaning it points down
+(theta = pi) in absolute world frame.
 
 This is a stub for Milestone 1. Reward shaping, target conditioning and randomization
 will evolve in later milestones.
@@ -23,14 +24,11 @@ import mujoco
 import numpy as np
 from gymnasium import spaces
 
-MODEL_PATH = Path(__file__).resolve().parents[1] / "models" / "triple_pendulum.xml"
+# Canonical EP target angles / naming live in sim.equilibria. Re-exported here
+# for backward compatibility (callers import ep_target_angles from this module).
+from sim.equilibria import ep_target_angles  # noqa: E402,F401
 
-# Equilibrium target angles in absolute world frame (theta = 0 means link points up).
-# 3 bits = 8 EPs. Bit i (i in {0,1,2}) encodes link i+1.
-def ep_target_angles(ep_id: int) -> np.ndarray:
-    """Return target absolute angles [theta1, theta2, theta3] for equilibrium ep_id (0..7)."""
-    bits = [(ep_id >> i) & 1 for i in range(3)]  # bit 0 = link 1, etc.
-    return np.array([0.0 if b == 1 else np.pi for b in bits], dtype=np.float64)
+MODEL_PATH = Path(__file__).resolve().parents[1] / "models" / "triple_pendulum.xml"
 
 
 class TriplePendulumEnv(gym.Env):
@@ -138,7 +136,7 @@ class TriplePendulumEnv(gym.Env):
 
     # Per-link fall thresholds based on whether the link is targeted UP or DOWN.
     # CRITICAL FIX (audit 2026-05-10): the previous global 0.6 rad threshold
-    # made EP4 (UDD) / EP6 (UUD) untrainable: when link 1 is held vertical,
+    # made EP4 (DDU) / EP6 (DUU) untrainable: when a link is held vertical,
     # the cart's stabilizing motion shakes the hanging links 2-3, which
     # naturally swing well past 0.6 rad. The env was terminating with -100
     # FALL_PENALTY on every recovery attempt -> 0% success on those EPs.

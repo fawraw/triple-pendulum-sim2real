@@ -41,12 +41,11 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from sim.envs.triple_pendulum_env import TriplePendulumEnv  # noqa: E402
+from sim.equilibria import EP_NAMES  # noqa: E402
 from training.env_utils import make_vec_env  # noqa: E402
 from training.mlflow_setup import init_mlflow  # noqa: E402
 from training.mlflow_safe import safe_artifact, safe_tag  # noqa: E402
 from training.pipeline_notifier import notify as pipeline_notify  # noqa: E402
-
-EP_NAMES = ["DDD", "DDU", "DUD", "DUU", "UDD", "UDU", "UUD", "UUU"]
 
 # 56 directed transitions (src != dst)
 ALL_TRANSITIONS = [(src, dst) for src in range(8) for dst in range(8) if src != dst]
