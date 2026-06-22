@@ -18,6 +18,7 @@ env:
                             # steps (~40ms at 50Hz) before killing episode
 
 algo: TQC
+seed: 0                    # fixed for reproducibility (logged to MLflow)
 total_timesteps: 2_000_000
 n_envs: 8                  # parallel envs (SubprocVecEnv); set to 1 to disable
 

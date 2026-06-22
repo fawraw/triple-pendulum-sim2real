@@ -14,9 +14,25 @@ from __future__ import annotations
 from functools import partial
 
 from stable_baselines3.common.monitor import Monitor
+from stable_baselines3.common.utils import set_random_seed
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecEnv
 
 from sim.envs.triple_pendulum_env import TriplePendulumEnv
+
+
+def seed_everything(seed: int | None) -> int | None:
+    """Seed Python/NumPy/Torch RNGs for reproducible training.
+
+    No-op when seed is None (preserves the historical non-deterministic
+    behaviour for configs that omit a seed). Returns the seed it applied so
+    callers can log it. The model's own RNG (action sampling, env seeding) is
+    seeded separately via TQC(seed=...) / model.set_random_seed(...).
+    """
+    if seed is None:
+        return None
+    seed = int(seed)
+    set_random_seed(seed)
+    return seed
 
 
 def _make_one_env(env_cfg: dict) -> Monitor:

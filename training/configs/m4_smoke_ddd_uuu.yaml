@@ -24,6 +24,7 @@ env:
   transition_bonus: 200.0
 
 algo: TQC
+seed: 0                    # fixed for reproducibility (logged to MLflow)
 total_timesteps: 200_000   # smoke budget — ~1.5h on CT 1018 CPU
 n_envs: 4
 

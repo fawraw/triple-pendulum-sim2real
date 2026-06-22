@@ -12,6 +12,7 @@ env:
   init_noise: 0.05
 
 algo: TQC
+seed: 0                    # fixed for reproducibility (logged to MLflow)
 total_timesteps: 4_000_000
 n_envs: 8                  # parallel envs (SubprocVecEnv); set to 1 to disable
 

@@ -42,7 +42,7 @@ sys.path.insert(0, str(ROOT))
 
 from sim.envs.triple_pendulum_env import TriplePendulumEnv  # noqa: E402
 from sim.equilibria import EP_NAMES  # noqa: E402
-from training.env_utils import make_vec_env  # noqa: E402
+from training.env_utils import make_vec_env, seed_everything  # noqa: E402
 from training.mlflow_setup import init_mlflow  # noqa: E402
 from training.mlflow_safe import safe_artifact, safe_tag  # noqa: E402
 from training.pipeline_notifier import notify as pipeline_notify  # noqa: E402
@@ -189,6 +189,7 @@ def main(cfg_path: str) -> None:
     init_mlflow()
     run_name = f"m4_transitions_{time.strftime('%Y%m%d_%H%M%S')}"
 
+    seed = seed_everything(cfg.get("seed"))
     env_cfg = cfg["env"]
     total_timesteps = int(cfg["total_timesteps"])
     n_envs = int(cfg.get("n_envs", 1))
@@ -207,10 +208,12 @@ def main(cfg_path: str) -> None:
     if pretrained:
         print(f"Loading pretrained policy: {pretrained}")
         model = TQC.load(pretrained, env=train_env, device=device, **tqc_kwargs)
+        if seed is not None:
+            model.set_random_seed(seed)
     else:
         model = TQC(policy, train_env, verbose=0,
                     tensorboard_log=str(ROOT / "runs" / run_name),
-                    policy_kwargs=policy_kwargs, device=device, **tqc_kwargs)
+                    policy_kwargs=policy_kwargs, device=device, seed=seed, **tqc_kwargs)
     actual_device = str(model.device)
 
     rollout_cb = MLflowRolloutLogger(log_freq=int(cb_cfg.get("rollout_log_freq", 10_000)))
@@ -237,6 +240,7 @@ def main(cfg_path: str) -> None:
         mlflow.log_param("total_timesteps", total_timesteps)
         mlflow.log_param("n_envs", n_envs)
         mlflow.log_param("device", actual_device)
+        mlflow.log_param("seed", seed if seed is not None else "none")
         mlflow.log_param("pretrained_policy", pretrained or "none")
         mlflow.log_param("git_commit", _git_commit())
 

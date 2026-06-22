@@ -9,6 +9,7 @@ env:
   init_noise: 0.05
 
 algo: TQC
+seed: 0                     # fixed for reproducibility (logged to MLflow)
 total_timesteps: 150_000
 
 tqc:
