@@ -4,10 +4,13 @@
 
 stage: M4_smoke_DDD_UUU
 
-# Warm-start from the M3b-v6 cloud final checkpoint (NOTE: this lives on the
-# RunPod tp-data volume; for CT 1018 smoke we use the local 67.5% [256,256]
-# baseline. Train_m4_transitions resolves relative paths from project root.)
-pretrained_policy: "checkpoints/m3_all_eps_20260509_162351/best_model.zip"
+# Warm-start from the local M3 baseline. The 72.5% M3b-v6 cloud checkpoint
+# lived on the RunPod tp-data volume (gone), so for the CT 1018 smoke we use
+# the best FINISHED local run: m3_all_eps_20260509_072849 (overall 0.675,
+# net_arch [256,256]). Paths are resolved from the project root.
+# (The previous target ...162351 was a never-finalised RUNNING run with no
+# recorded metric and a [512,512] net_arch -- see audit 2026-06-22.)
+pretrained_policy: "checkpoints/m3_all_eps_20260509_072849/best_model.zip"
 
 env:
   target_ep: 7        # UUU
