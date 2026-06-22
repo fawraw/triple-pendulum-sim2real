@@ -284,6 +284,21 @@ def main(cfg_path: str) -> None:
         for k, v in metrics.items():
             mlflow.log_metric(f"final_{k}", v)
 
+        # Single-transition smoke (target_mode=fixed): the 56-transition overall
+        # is uninformative because it scores 55 transitions the policy never
+        # trained on. Surface the trained pair's own success rate so the smoke
+        # result is interpretable (this was the cause of the misleading 0%).
+        if str(env_cfg.get("target_mode")) == "fixed" and env_cfg.get("start_ep") is not None:
+            src = int(env_cfg["start_ep"])
+            dst = int(env_cfg.get("target_ep", 7))
+            trained_sr = metrics.get(f"ep{src}to{dst}_success_rate")
+            if trained_sr is not None:
+                mlflow.log_metric("final_trained_transition_success_rate", trained_sr)
+                mlflow.log_param("trained_transition", f"{EP_NAMES[src]}->{EP_NAMES[dst]}")
+                print(f"  [smoke] trained transition {EP_NAMES[src]}->{EP_NAMES[dst]}: "
+                      f"success={trained_sr:.2f}  (the 56-transition overall below is "
+                      f"uninformative for a single-transition run)")
+
         print(f"\nDONE in {elapsed:.0f}s  overall_success_rate={metrics['overall_success_rate']:.3f}")
         for src, dst in ALL_TRANSITIONS:
             key = f"ep{src}to{dst}"

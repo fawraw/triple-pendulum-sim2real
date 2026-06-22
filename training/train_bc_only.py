@@ -9,7 +9,7 @@ shared-weight network avoid biasing the actor toward EP4/EP6 only.
 Run from project root:
 
     MUJOCO_GL=osmesa python -m training.train_bc_only \\
-        --config training/configs/m3b_stage3a_bc_only.yaml
+        --config training/configs/m3b_stage3a_bc_only_local.yaml
 """
 from __future__ import annotations
 
