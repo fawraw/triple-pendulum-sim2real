@@ -23,6 +23,11 @@ env:
   fall_grace_steps: 0
   w_down: 1.0
   vel_cost_coef: 0.02
+  # See probe_m4_ddd_udd: stronger cart-centering + rail headroom so the cart
+  # does not run off the rail mid swing-up. Tighten cart_limit toward the
+  # hardware usable travel (~0.5) before sim2real.
+  cart_cost_coef: 0.5
+  cart_limit: 1.10
   transition_success_tol_rad: 0.3   # generous tolerance for a probe
   transition_success_steps: 100     # 2s at 50Hz in-tolerance to count as arrived
   transition_bonus: 200.0
