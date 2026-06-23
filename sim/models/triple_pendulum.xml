@@ -29,7 +29,9 @@
 
     <!-- Cart -->
     <body name="cart" pos="0 0 0">
-      <joint name="slider" type="slide" axis="1 0 0" range="-0.95 0.95" damping="0.1"/>
+      <!-- Generous physical bound; the EFFECTIVE usable rail is enforced in the
+           env via cart_limit (default 0.95, = the original limit). -->
+      <joint name="slider" type="slide" axis="1 0 0" range="-1.5 1.5" damping="0.1"/>
       <geom name="cart_geom" type="box" size="0.05 0.04 0.03" mass="0.5" rgba="0.2 0.4 0.8 1"/>
 
       <!-- Pole 1 (lower link, attached to cart) -->

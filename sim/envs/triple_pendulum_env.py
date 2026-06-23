@@ -44,6 +44,8 @@ class TriplePendulumEnv(gym.Env):
                  w_down: float = 1.0,
                  progress_reward_coef: float = 0.0,
                  vel_cost_coef: float = 0.05,
+                 cart_cost_coef: float = 0.1,
+                 cart_limit: float = 0.95,
                  # M4 transition params: start_ep != target_ep means a swing/transition task
                  start_ep: int | None = None,
                  transition_success_tol_rad: float = 0.2,
@@ -89,6 +91,13 @@ class TriplePendulumEnv(gym.Env):
         self.w_down = float(w_down)
         self.progress_reward_coef = float(progress_reward_coef)
         self.vel_cost_coef = float(vel_cost_coef)
+        # cart_cost_coef: weight on the cart-centering penalty (0.1 default).
+        # cart_limit: effective usable rail half-length; the episode ends if the
+        # cart goes past it. The XML allows a wider physical range so this is a
+        # pure config knob (raise it for swing-up headroom, lower it toward the
+        # hardware's usable travel for sim2real / domain randomization).
+        self.cart_cost_coef = float(cart_cost_coef)
+        self.cart_limit = float(cart_limit)
         # M4 transition params
         self.start_ep: int | None = int(start_ep) if start_ep is not None else None
         self.transition_success_tol_rad = float(transition_success_tol_rad)
@@ -164,7 +173,7 @@ class TriplePendulumEnv(gym.Env):
     FALL_PENALTY = 100.0
 
     def _is_fallen(self) -> bool:
-        if abs(self.data.qpos[0]) > 0.95:
+        if abs(self.data.qpos[0]) > self.cart_limit:
             return True
         # Immunity window at episode start — gives the policy time to orient
         if self._step_count < self.start_grace_steps:
@@ -200,7 +209,7 @@ class TriplePendulumEnv(gym.Env):
         weights = np.where(np.isclose(target, 0.0), 5.0, self.w_down)
         ang_cost = float(np.sum(weights * err ** 2))
         vel_cost = self.vel_cost_coef * float(st[3] ** 2 + st[5] ** 2 + st[7] ** 2)
-        cart_cost = 0.1 * float(st[0] ** 2)
+        cart_cost = self.cart_cost_coef * float(st[0] ** 2)
         u = float(self.data.ctrl[0])
         ctrl_cost = 0.001 * u ** 2
         r = -(ang_cost + vel_cost + cart_cost + ctrl_cost)

@@ -1,0 +1,50 @@
+"""Tests for the cart-control knobs (cart_limit, cart_cost_coef) added to make
+the M4 swing-up keep the cart on the rail."""
+import mujoco
+import numpy as np
+
+from sim.envs.triple_pendulum_env import TriplePendulumEnv
+
+
+def _env_at_uuu(**kw):
+    # Start near UUU so the angle-fall check is not triggered; isolates the cart.
+    env = TriplePendulumEnv(target_ep=7, target_mode="fixed", init_mode="near_target",
+                            init_noise=0.0, max_episode_steps=2000, **kw)
+    env.reset(seed=0)
+    return env
+
+
+def test_cart_limit_default_is_095():
+    env = _env_at_uuu()
+    assert env.cart_limit == 0.95
+    env.data.qpos[0] = 0.90
+    assert env._is_fallen() is False
+    env.data.qpos[0] = 0.96
+    assert env._is_fallen() is True
+
+
+def test_cart_limit_configurable():
+    wide = _env_at_uuu(cart_limit=1.20)
+    wide.data.qpos[0] = 1.00
+    assert wide._is_fallen() is False      # 1.00 < 1.20, still on rail
+    tight = _env_at_uuu(cart_limit=0.50)
+    tight.data.qpos[0] = 0.60
+    assert tight._is_fallen() is True      # 0.60 > 0.50, off rail
+
+
+def test_cart_cost_coef_default_and_scaling():
+    soft = _env_at_uuu(cart_cost_coef=0.1)
+    hard = _env_at_uuu(cart_cost_coef=1.0)
+    assert soft.cart_cost_coef == 0.1
+    for e in (soft, hard):
+        e.data.qpos[0] = 1.0
+        mujoco.mj_forward(e.model, e.data)
+    # Same off-center cart, larger coef -> more negative reward (stronger centering).
+    assert hard._reward(False) < soft._reward(False)
+
+
+def test_xml_allows_motion_past_old_limit():
+    # The physical rail was widened so cart_limit is the effective bound.
+    env = _env_at_uuu(cart_limit=1.4)
+    lo, hi = env.model.jnt_range[env.model.joint("slider").id]
+    assert hi >= 1.4 and lo <= -1.4
