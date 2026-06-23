@@ -1,0 +1,54 @@
+# M4 probe B (HARD) -- single transition DDD -> UUU (full 3-link swing-up).
+# Same as probe A but the hardest target. The 200K smoke scored 0% on this
+# pair; this 500K probe tests whether more budget alone moves it. Compared with
+# probe A (DDD->UDD), it isolates swing-up complexity as the blocker.
+# 500K steps, ~2h on CT 1018 CPU. Read final_trained_transition_success_rate.
+
+stage: PROBE_M4_DDD_UUU
+
+# Warm-start from the best FINISHED local M3 run (overall 0.675, net_arch [256,256]).
+pretrained_policy: "checkpoints/m3_all_eps_20260509_072849/best_model.zip"
+
+env:
+  target_ep: 7        # UUU (all links up)
+  start_ep: 0         # DDD -- overrides init even with target_mode="fixed"
+  target_mode: fixed
+  init_mode: near_target
+  init_noise: 0.05
+  max_episode_steps: 2000
+  fall_grace_steps: 0
+  w_down: 1.0
+  vel_cost_coef: 0.02
+  transition_success_tol_rad: 0.3   # generous tolerance for a probe
+  transition_success_steps: 100     # 2s at 50Hz in-tolerance to count as arrived
+  transition_bonus: 200.0
+
+algo: TQC
+seed: 0
+total_timesteps: 500_000   # probe budget -- ~2h on CT 1018 CPU
+n_envs: 4
+
+tqc:
+  policy: MlpPolicy
+  learning_rate: 1.0e-4
+  buffer_size: 500_000
+  batch_size: 256
+  tau: 0.005
+  gamma: 0.99
+  train_freq: 1
+  gradient_steps: 4
+  top_quantiles_to_drop_per_net: 2
+  policy_kwargs:
+    net_arch: [256, 256]
+    n_critics: 3
+    n_quantiles: 25
+
+callbacks:
+  rollout_log_freq: 5_000
+  checkpoint_freq:  100_000
+
+eval:
+  freq:            50_000
+  n_episodes:      8
+  deterministic:   true
+  final_n_episodes: 56     # per_transition_eval evals all 56; we read ep0to7
