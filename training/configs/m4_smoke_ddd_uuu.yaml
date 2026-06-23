@@ -14,9 +14,11 @@ pretrained_policy: "checkpoints/m3_all_eps_20260509_072849/best_model.zip"
 
 env:
   target_ep: 7        # UUU
-  start_ep: 0         # DDD — overrides init even with target_mode="fixed"
+  start_ep: 0         # DDD -- overrides init even with target_mode="fixed"
   target_mode: fixed
-  init_mode: near_target
+  # bottom (not near_target): a swing-up starts far from target; near_target
+  # triggers the angle-fall check at step 0 and every episode dies at step 1.
+  init_mode: bottom
   init_noise: 0.05
   max_episode_steps: 2000           # long enough for swing-up
   fall_grace_steps: 0

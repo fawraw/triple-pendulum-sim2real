@@ -87,3 +87,37 @@ def test_pretrained_absolute_path_skipped(tmp_path):
     cfg["pretrained_policy"] = "/nonexistent/absolute/path.zip"
     # No raise — absolute paths are not validated against ROOT.
     m4._validate_cfg(cfg)
+
+
+# ---------------------------------------------------------------------------
+# Swing-up mis-config guard (fixed + near_target + start != target -> dies @ step 1)
+# ---------------------------------------------------------------------------
+
+def _swingup_cfg(init_mode):
+    return {
+        "env": {"max_episode_steps": 2000, "target_mode": "fixed",
+                "init_mode": init_mode, "start_ep": 0, "target_ep": 7},
+        "tqc": {"policy": "MlpPolicy"},
+        "total_timesteps": 1000,
+        "pretrained_policy": "/abs/ok.zip",  # absolute -> existence check skipped
+    }
+
+
+def test_swingup_fixed_near_target_rejected():
+    with pytest.raises(ValueError, match="swing-up mis-config"):
+        m4._validate_cfg(_swingup_cfg("near_target"))
+
+
+def test_swingup_bottom_allowed():
+    m4._validate_cfg(_swingup_cfg("bottom"))  # no raise
+
+
+def test_swingup_random_allowed():
+    m4._validate_cfg(_swingup_cfg("random"))  # no raise
+
+
+def test_stabilization_near_target_allowed():
+    # start_ep == target_ep is a stabilization task; near_target is correct there.
+    cfg = _swingup_cfg("near_target")
+    cfg["env"]["start_ep"] = 7  # == target_ep -> not a swing-up
+    m4._validate_cfg(cfg)

@@ -174,6 +174,26 @@ def _validate_cfg(cfg: dict) -> None:
         if not resolved.exists():
             raise ValueError(f"pretrained_policy not found: {resolved}")
 
+    # Swing-up guard: a single fixed transition with start != target is a
+    # swing-up, but with init_mode="near_target" the env's angle-fall check
+    # fires at step 0 (init is far from target) and EVERY episode terminates at
+    # step 1 with the -100 penalty -> the policy learns nothing (this silently
+    # wasted a 200K smoke + a 500K probe before it was caught). For such a run
+    # init_mode must be "bottom" or "random" so episodes survive. In
+    # target_mode="transition" the env defers the fall check until the target is
+    # reached, so it is exempt.
+    env = cfg.get("env", {})
+    if (env.get("target_mode") == "fixed"
+            and env.get("init_mode", "near_target") == "near_target"
+            and env.get("start_ep") is not None
+            and env.get("start_ep") != env.get("target_ep")):
+        raise ValueError(
+            "swing-up mis-config: target_mode='fixed' + init_mode='near_target' "
+            f"with start_ep={env.get('start_ep')} != target_ep={env.get('target_ep')} "
+            "terminates every episode at step 1 (angle-fall fires immediately). "
+            "Use init_mode: bottom (or random) for a single-transition swing-up."
+        )
+
 
 def _git_commit() -> str:
     r = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True,
