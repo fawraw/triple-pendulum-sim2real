@@ -13,7 +13,11 @@ env:
   target_ep: 7        # UUU (all links up)
   start_ep: 0         # DDD -- overrides init even with target_mode="fixed"
   target_mode: fixed
-  init_mode: near_target
+  # init_mode MUST be bottom (not near_target) for a swing-up: with near_target
+  # the angle-fall check fires at step 0 (init at DDD is far from UUU) and every
+  # episode terminates at step 1 with the -100 penalty -> nothing is learned.
+  # bottom inits at DDD and skips angle-fall (only cart-off-rail terminates).
+  init_mode: bottom
   init_noise: 0.05
   max_episode_steps: 2000
   fall_grace_steps: 0
