@@ -272,6 +272,7 @@ hardware/
   bom/                    Bill of materials (planned for M6)
 docs/
   roadmap.md              Mirror of the wiki Roadmap (canonical: wiki)
+  strategy.md             Publication strategy / milestone framing
   runbook.md              Operational troubleshooting (8 failure scenarios)
   launcher_api.service    Systemd unit template (KillMode=process)
   literature/             Annotated bibliography
