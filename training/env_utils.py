@@ -50,6 +50,7 @@ def _make_one_env(env_cfg: dict) -> Monitor:
         progress_reward_coef=float(env_cfg.get("progress_reward_coef", 0.0)),
         vel_cost_coef=float(env_cfg.get("vel_cost_coef", 0.05)),
         cart_cost_coef=float(env_cfg.get("cart_cost_coef", 0.1)),
+        cart_barrier_coef=float(env_cfg.get("cart_barrier_coef", 0.0)),
         cart_limit=float(env_cfg.get("cart_limit", 0.95)),
         start_ep=env_cfg.get("start_ep"),  # M4 transition tasks
         transition_success_tol_rad=float(env_cfg.get("transition_success_tol_rad", 0.2)),

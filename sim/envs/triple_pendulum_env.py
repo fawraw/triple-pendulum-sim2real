@@ -45,6 +45,7 @@ class TriplePendulumEnv(gym.Env):
                  progress_reward_coef: float = 0.0,
                  vel_cost_coef: float = 0.05,
                  cart_cost_coef: float = 0.1,
+                 cart_barrier_coef: float = 0.0,
                  cart_limit: float = 0.95,
                  # M4 transition params: start_ep != target_ep means a swing/transition task
                  start_ep: int | None = None,
@@ -97,6 +98,7 @@ class TriplePendulumEnv(gym.Env):
         # pure config knob (raise it for swing-up headroom, lower it toward the
         # hardware's usable travel for sim2real / domain randomization).
         self.cart_cost_coef = float(cart_cost_coef)
+        self.cart_barrier_coef = float(cart_barrier_coef)
         self.cart_limit = float(cart_limit)
         # M4 transition params
         self.start_ep: int | None = int(start_ep) if start_ep is not None else None
@@ -210,9 +212,15 @@ class TriplePendulumEnv(gym.Env):
         ang_cost = float(np.sum(weights * err ** 2))
         vel_cost = self.vel_cost_coef * float(st[3] ** 2 + st[5] ** 2 + st[7] ** 2)
         cart_cost = self.cart_cost_coef * float(st[0] ** 2)
+        # Soft barrier near the rail ends. The quadratic cart_cost is bounded and
+        # barely deters approaching the limit (M4 probes: the cart slid to the
+        # rail and died at ~165 steps). This high-power term stays ~0 in the
+        # middle and blows up in the last ~15% of the rail, keeping episodes
+        # alive so the swing-up can actually be learned. Disabled by default.
+        cart_barrier = self.cart_barrier_coef * float(abs(st[0]) / self.cart_limit) ** 8
         u = float(self.data.ctrl[0])
         ctrl_cost = 0.001 * u ** 2
-        r = -(ang_cost + vel_cost + cart_cost + ctrl_cost)
+        r = -(ang_cost + vel_cost + cart_cost + cart_barrier + ctrl_cost)
         # Progress reward: dense bonus for reducing weighted error each step.
         # Provides gradient even in episodes that ultimately fail.
         if self.progress_reward_coef > 0.0 and self._prev_err is not None:

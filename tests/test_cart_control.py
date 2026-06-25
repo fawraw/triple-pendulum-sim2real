@@ -43,6 +43,24 @@ def test_cart_cost_coef_default_and_scaling():
     assert hard._reward(False) < soft._reward(False)
 
 
+def test_cart_barrier_default_off_and_steep_near_rail():
+    off = _env_at_uuu(cart_barrier_coef=0.0)
+    on = _env_at_uuu(cart_barrier_coef=50.0, cart_limit=1.10)
+    assert off.cart_barrier_coef == 0.0
+    # Near the centre the barrier is negligible: reward ~ unchanged vs no barrier.
+    mid = _env_at_uuu(cart_barrier_coef=50.0, cart_limit=1.10)
+    for e in (off, mid):
+        e.data.qpos[0] = 0.2
+        mujoco.mj_forward(e.model, e.data)
+    assert abs(mid._reward(False) - off._reward(False)) < 0.05
+    # Near the rail end the barrier dominates -> reward far more negative.
+    on.data.qpos[0] = 1.05  # ~95% of the 1.10 limit
+    mujoco.mj_forward(on.model, on.data)
+    off.data.qpos[0] = 1.05
+    mujoco.mj_forward(off.model, off.data)
+    assert on._reward(False) < off._reward(False) - 5.0
+
+
 def test_xml_allows_motion_past_old_limit():
     # The physical rail was widened so cart_limit is the effective bound.
     env = _env_at_uuu(cart_limit=1.4)
