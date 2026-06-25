@@ -24,13 +24,18 @@ env:
   fall_grace_steps: 0
   w_down: 1.0
   vel_cost_coef: 0.02
-  # Diagnostic 2026-06-23: the policy DID swing link1 up but drifted the cart off
-  # the rail (reached +-0.96) -> episode ended before it could hold the target.
-  # Stronger cart-centering + a bit of rail headroom. NOTE: keep cart_limit near
-  # the hardware usable travel (~0.5) for sim2real; 1.10 is feasibility headroom
-  # to be tightened (ideally domain-randomized) before M5/M6.
-  cart_cost_coef: 0.5
+  # Diagnostic 2026-06: with a pinned target the policy degenerated to a cart
+  # slide into the rail (~165 steps), never approaching UDD. Fixes:
+  #  - cart_barrier_coef: steep barrier so the cart cannot reach the rail end and
+  #    episodes survive the full budget (the prerequisite for learning anything).
+  #  - progress_reward_coef: dense reward for reducing weighted angle error each
+  #    step -> a swing-up gradient (vs the near-sparse base reward).
+  # NOTE: cart_limit 1.10 is feasibility headroom; tighten toward the hardware
+  # ~0.5 m usable travel (ideally domain-randomized) before M5/M6.
+  cart_cost_coef: 0.2
+  cart_barrier_coef: 50.0
   cart_limit: 1.10
+  progress_reward_coef: 1.0
   transition_success_tol_rad: 0.3   # generous tolerance for a probe
   transition_success_steps: 100     # 2s at 50Hz in-tolerance to count as arrived
   transition_bonus: 200.0
