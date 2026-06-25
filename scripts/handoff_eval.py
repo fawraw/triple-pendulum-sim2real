@@ -48,7 +48,8 @@ def run(swingup_path, stab_path, src, dst, capture_tol, capture_vel, n, max_step
         ctrl = HandoffController(swingup, stab, target,
                                  capture_tol_rad=capture_tol,
                                  capture_vel_rad_s=capture_vel, latch=True)
-        obs, _ = env.reset(seed=trial)
+        # Pin the pair: transition mode randomises start/target unless given via options.
+        obs, _ = env.reset(seed=trial, options={"start_ep": src, "target_ep": dst})
         ctrl.reset()
         xs, modes = [], []
         term = trunc = False
