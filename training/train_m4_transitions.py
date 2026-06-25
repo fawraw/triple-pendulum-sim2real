@@ -116,7 +116,11 @@ def per_transition_eval(model, env_cfg: dict, n_per_transition: int = 5) -> dict
                 transition_success_steps=int(env_cfg.get("transition_success_steps", 200)),
                 transition_bonus=0.0,
             )
-            obs, _ = env.reset(seed=src * 100 + dst * 10 + trial)
+            # MUST pin the pair via options: target_mode="transition" otherwise
+            # RANDOMISES start_ep/target_ep on reset, so without this every
+            # ep{src}to{dst} slot would measure a random transition, not (src,dst).
+            obs, _ = env.reset(seed=src * 100 + dst * 10 + trial,
+                               options={"start_ep": src, "target_ep": dst})
             ep_n = 0
             done = trunc = False
             arrived = False
