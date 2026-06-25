@@ -273,6 +273,7 @@ hardware/
 docs/
   roadmap.md              Mirror of the wiki Roadmap (canonical: wiki)
   strategy.md             Publication strategy / milestone framing
+  m4_findings.md          M4 swing-up investigation: bugs, barrier, catch basin
   runbook.md              Operational troubleshooting (8 failure scenarios)
   launcher_api.service    Systemd unit template (KillMode=process)
   literature/             Annotated bibliography
