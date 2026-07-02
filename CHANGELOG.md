@@ -4,6 +4,45 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ---
 
+## 2026-06-25 — M4 swing-up investigation + two-stage hand-off
+
+De-risking M4 (the 56 transitions). Full writeup in `docs/m4_findings.md`.
+
+### Bugs fixed (they had made every prior M4 result uninterpretable)
+
+- **Episodes died at step 1.** `target_mode=fixed` + `init_mode=near_target` with
+  `start_ep != target_ep` (a swing-up) fires the angle-fall check at step 0, so
+  every training episode terminated immediately. Fix: `init_mode: bottom` for
+  swing-ups + a `_validate_cfg` guard that rejects the mis-config.
+- **The eval measured random transitions.** `target_mode="transition"` randomises
+  the (start, target) pair on reset unless pinned via `reset(options=...)`;
+  `per_transition_eval` never pinned it. Fix: pass `options={start_ep, target_ep}`.
+
+### Environment / reward knobs
+
+- `cart_cost_coef`, `cart_limit` (config knobs; XML rail widened to +-1.5 so
+  `cart_limit` is the effective, config-driven usable rail).
+- `cart_barrier_coef`: a steep `(x/cart_limit)^8` barrier near the rail ends so
+  swing-up episodes survive the full budget instead of the cart sliding off at
+  ~165 steps. With it, episodes last ~1200-1400 steps and the swing-up reaches
+  UDD (closest all-link error ~0.21 rad), though inconsistently and without
+  holding.
+
+### Two-stage hand-off
+
+- `sim/handoff.py` (`HandoffController`): swing-up policy until the state enters
+  the stabilizer's capture set, then the M3 stabilizer takes over (latched).
+- `scripts/handoff_eval.py`: evaluate a transition with swingup + stabilizer.
+- `scripts/measure_catch_basin.py`: quantify a stabilizer's catch region.
+
+### Finding
+
+The hand-off fires, but M3's catch basin is only ~0.1 rad / near-zero velocity,
+while the swing-up delivers ~0.2 rad mid-swing -> M3 drops it. Next levers
+(GPU): a wider-basin catcher + a soft (slow, cart-centred) swing-up delivery.
+
+---
+
 ## 2026-06-22 — Multi-dimension audit remediation
 
 Fixes from a read-only audit of code, ML methodology, infra, pipeline, security
