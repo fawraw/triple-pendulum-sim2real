@@ -111,7 +111,7 @@ See [n8n-Orchestration](https://github.com/fawraw/triple-pendulum-sim2real/wiki/
 | 1. MuJoCo model, 3 links on cart | ✅ | 2026-05-08 |
 | 2. Stabilize UUU in sim (TQC) | 🟡 partial | 2026-05-08 |
 | 3. All 8 EPs stabilized in sim | ✅ **Closed at 72.5%** (M3b-v6 cloud) — first triple-pendulum policy with all 8 equilibria non-zero in random mode. The 75% threshold was an internal goal; the scientific milestone is met. _Caveat: this run lived on the RunPod `tp-data` volume and was never logged to the persistent MLflow on CT 1016 (best reproducible run there is 67.5%); the 72.5% checkpoint is not currently re-evaluable._ | 2026-05-14 |
-| 4. 56 transitions in sim | 🟡 **smoke ran, full run pending** — a single-transition smoke (DDD→UUU, 200K steps) ran 2026-05-23. Its 56-transition `overall_success_rate` was 0%, but that metric is **uninformative for a single-transition run** (it scores 55 transitions the policy never trained on); the trained pair is now logged separately as `final_trained_transition_success_rate`. The full 56-transition run is the next step. | 2026-05-23 |
+| 4. 56 transitions in sim | 🟡 **in progress — two-stage hand-off** (swing-up → M3 stabilizer). De-risking on DDD→UDD fixed 3 eval/config bugs; with a cart barrier the swing-up now reaches the target (~0.21 rad) but the hand-off is gated by M3's small catch basin (~0.1 rad / near-zero velocity). Next: wider-basin catcher + soft delivery, on GPU. See [`docs/m4_findings.md`](docs/m4_findings.md). | 2026-06-25 |
 | 5. Domain randomization | ⬜ | |
 | 6. Hardware v1 assembled | ⬜ | |
 | 7. First Sim2Real swing-up | ⬜ | |

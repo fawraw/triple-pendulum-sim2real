@@ -65,9 +65,9 @@ Milestones are sequential: each is a prerequisite for the next. Acceptance crite
 
 **Acceptance:** ≥ 80% success rate aggregated over all 56 transitions.
 
-**Status:** Not started for the full 56-transition run. A single-transition smoke (DDD→UUU, 200K steps) ran 2026-05-23 to validate the env + pipeline; its 56-transition `overall_success_rate` was 0% but that aggregate is uninformative for a single-transition run (it scores 55 transitions never trained). The trained pair is now logged separately as `final_trained_transition_success_rate`.
+**Status (2026-06-25):** In progress via a **two-stage hand-off** (swing-up -> M3 stabilizer). De-risking on the single transition DDD->UDD found and fixed 3 eval/config bugs that had made prior results uninterpretable (step-1 episode death, random-pair eval, uninformative overall -- see `docs/m4_findings.md`). With a cart barrier, episodes now survive and the swing-up reaches UDD (~0.21 rad) but inconsistently and without holding; the hand-off controller fires but M3's catch basin is only ~0.1 rad / near-zero velocity, so it drops the fast delivery. Next: a wider-basin catcher + a soft swing-up delivery, iterated on GPU.
 
-**Notes:** Requires swing-up in addition to stabilization. Warm-start from the best M3b/M3c checkpoint via `pretrained_policy` in the M4 config. The full config trains in `target_mode: transition` to match `per_transition_eval`.
+**Notes:** Requires swing-up in addition to stabilization. Single-transition swing-up configs use `target_mode: fixed` + `init_mode: bottom`; the full 56-transition config uses `target_mode: transition` (matching `per_transition_eval`, which pins each pair via `reset(options=...)`). Env knobs: `cart_cost_coef`, `cart_barrier_coef`, `cart_limit`, `progress_reward_coef`.
 
 ---
 
